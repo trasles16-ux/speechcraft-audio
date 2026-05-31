@@ -1,17 +1,37 @@
+# Python
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*$py.class
+*.so
+.Python
 build/
 dist/
 *.egg-info/
+*.egg
 .venv/
 venv/
-env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build artifacts
 *.spec
 !ffmpeg.exe
+hermes/
+
+# Audio/session temp files
 temp_*.wav
 temp_*.mp3
+temp_*.m4a
 *.scproj
 *.scpresets
+
+# Logs
+*.log
+
+# macOS
 .DS_Store
-hermes/
