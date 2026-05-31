@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.pyo
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+*.spec
+!ffmpeg.exe
+temp_*.wav
+temp_*.mp3
+*.scproj
+*.scpresets
+.DS_Store
+hermes/
