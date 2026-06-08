@@ -6,7 +6,6 @@ pedalboard
 pydub
 sounddevice
 soundfile
-wave
 SpeechRecognition>=3.10.0
 
 # Transcription
