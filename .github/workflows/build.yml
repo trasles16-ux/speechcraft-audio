@@ -16,7 +16,7 @@ jobs:
       - name: Install
         run: pip install -r requirements.txt pyinstaller
       - name: Build
-        run: pyinstaller SpeechCraft.spec --noconfirm
+        run: pyinstaller SpeechCraft_Studio.spec --noconfirm
       - uses: actions/upload-artifact@v4
         with:
           name: SpeechCraft-Windows
