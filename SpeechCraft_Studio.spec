@@ -4,11 +4,18 @@ import os
 
 here = os.path.dirname(os.path.abspath(SPEC))
 
-datas = [
+# Conditionally include data folders.
+# Local builds (Tracy's Windows machine) have these folders — full-featured EXE.
+# CI builds (GitHub Actions) don't — falls back to a "core" EXE for smoke-testing.
+# PyInstaller refuses to build if a listed data source doesn't exist, so we check first.
+datas = []
+for src, dst in [
     ('help', 'help'),
     ('piper_models', 'piper_models'),
     ('espeak-ng-data', 'espeak-ng-data'),
-]
+]:
+    if os.path.exists(os.path.join(here, src)):
+        datas.append((src, dst))
 binaries = []
 hiddenimports = [
     # Core
