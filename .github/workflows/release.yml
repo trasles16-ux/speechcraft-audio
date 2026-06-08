@@ -1,0 +1,93 @@
+name: Build SpeechCraft Release EXE (with data files)
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      data_source:
+        description: 'How to get the data files'
+        type: choice
+        required: true
+        default: 'release-assets'
+        options:
+          - release-assets
+          - smoke-test-only
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt pyinstaller
+
+      # Download the data files as a release asset, but only if a release is published
+      - name: Download data bundle from release assets (if available)
+        if: github.event_name == 'release'
+        shell: pwsh
+        run: |
+          $assets = $env:GITHUB_API_URL + "/repos/${{ github.repository }}/releases/${{ github.event.release.id }}/assets"
+          Write-Host "Looking for data assets in release: $assets"
+          # Try common names
+          $candidates = @("help.zip", "piper_models.zip", "espeak-ng-data.zip", "ffmpeg.exe")
+          foreach ($name in $candidates) {
+            $url = "$assets/$name"
+            try {
+              $ProgressPreference = 'SilentlyContinue'
+              Invoke-WebRequest -Uri $url -OutFile $name -Headers @{ "Authorization" = "token ${{ secrets.GITHUB_TOKEN }}" }
+              Write-Host "Downloaded: $name"
+            } catch {
+              Write-Host "Skipped: $name (not in release assets)"
+            }
+          }
+          # Extract zips if any
+          Get-ChildItem -Filter *.zip | ForEach-Object {
+            Write-Host "Extracting $($_.Name)..."
+            Expand-Archive -Path $_.Name -DestinationPath . -Force
+            Remove-Item $_.Name
+          }
+          # Show what we got
+          Write-Host "--- Current data folders ---"
+          Get-ChildItem -Directory | Select-Object Name
+
+      - name: Build with PyInstaller
+        run: pyinstaller SpeechCraft_Studio.spec --noconfirm
+
+      - name: Verify EXE was produced
+        shell: pwsh
+        run: |
+          if (Test-Path "dist/SpeechCraft_Studio.exe") {
+            $size = (Get-Item "dist/SpeechCraft_Studio.exe").Length / 1MB
+            Write-Host "EXE size: $([math]::Round($size, 1)) MB"
+          } else {
+            Write-Error "No EXE produced!"
+            exit 1
+          }
+
+      # If triggered by a release, attach the EXE to it
+      - name: Attach EXE to release (if release trigger)
+        if: github.event_name == 'release'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $releaseId = "${{ github.event.release.id }}"
+          $url = $env:GITHUB_API_URL + "/repos/${{ github.repository }}/releases/$releaseId/assets?name=SpeechCraft_Studio.exe"
+          Write-Host "Uploading EXE to release: $url"
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest -Uri $url -Method Post -InFile "dist/SpeechCraft_Studio.exe" `
+            -Headers @{ "Authorization" = "token $env:GH_TOKEN"; "Content-Type" = "application/octet-stream" }
+          Write-Host "Upload complete"
+
+      - name: Upload EXE as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpeechCraft-Windows-Full
+          path: dist/SpeechCraft_Studio.exe
+          retention-days: 30
