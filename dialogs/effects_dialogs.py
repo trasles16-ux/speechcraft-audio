@@ -1245,7 +1245,7 @@ class BatchProcessDialog(wx.Dialog):
 
         # File list
         sizer.Add(wx.StaticText(panel, label="Audio files found:"), 0, wx.LEFT | wx.BOTTOM, 4)
-        self.file_list = wx.ListBox(panel, style=wx.LB_SINGLE | wx.LBS_READONLY)
+        self.file_list = wx.ListBox(panel, style=wx.LB_SINGLE | wx.LB_READONLY)
         sizer.Add(self.file_list, 1, wx.EXPAND | wx.ALL, 4)
 
         panel.SetSizerAndFit(sizer)
