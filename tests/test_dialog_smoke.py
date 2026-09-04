@@ -236,3 +236,36 @@ def test_bug_report_url_builder_handles_no_log() -> None:
     )
     assert "issues/new" in url
     assert "Recent+log+output" not in url  # No log section when log is None
+
+
+@needs_wx
+def test_main_frame_tts_imports() -> None:
+    """Import the TTS mixin module without errors."""
+    import main_frame_tts  # noqa: F401
+
+
+@needs_wx
+def test_tts_mixin_class_exists() -> None:
+    """TTSMenuMixin must exist and expose both handlers."""
+    from main_frame_tts import TTSMenuMixin
+    assert hasattr(TTSMenuMixin, "on_edge_tts")
+    assert hasattr(TTSMenuMixin, "on_piper_tts")
+    assert callable(TTSMenuMixin.on_edge_tts)
+    assert callable(TTSMenuMixin.on_piper_tts)
+
+
+@needs_wx
+def test_speechcraft_frame_on_edge_tts_is_mixin() -> None:
+    """SpeechCraftFrame.on_edge_tts must come from TTSMenuMixin.
+
+    If someone accidentally redefines on_edge_tts on the frame itself,
+    this test fails — because it means the mixin wiring is broken.
+    """
+    try:
+        import audio_editor
+    except ImportError as exc:
+        pytest.skip(f"audio_editor.py cannot be imported ({exc})")
+    from main_frame_tts import TTSMenuMixin
+    import audio_editor as ae  # type: ignore
+    assert ae.SpeechCraftFrame.on_edge_tts is TTSMenuMixin.on_edge_tts
+    assert ae.SpeechCraftFrame.on_piper_tts is TTSMenuMixin.on_piper_tts
