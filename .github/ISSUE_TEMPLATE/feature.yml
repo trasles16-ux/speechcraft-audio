@@ -1,0 +1,46 @@
+name: Feature Request
+description: Suggest a new feature or improvement.
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      content: |
+        Tell us what you want SpeechCraft to do, and why. We read every feature request.
+  - type: input
+    id: title
+    attributes:
+      label: Short title
+      placeholder: "Add a noise-profile preset selector"
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      placeholder: "I do a lot of the same kind of audio cleanup and would like to save my noise-profile settings to reuse."
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: How would you like it to work?
+      placeholder: "A dropdown of named presets in the Effects dialog, with a Save Preset button."
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What alternatives have you considered?
+      placeholder: "I could just edit config files manually, but a UI would be friendlier."
+    validations:
+      required: false
+  - type: dropdown
+    id: accessibility
+    attributes:
+      label: Does this feature need any special accessibility consideration?
+      options:
+        - Standard NVDA / screen-reader support is fine
+        - This should be carefully designed with screen-reader users in mind
+        - Not sure
+    validations:
+      required: false
