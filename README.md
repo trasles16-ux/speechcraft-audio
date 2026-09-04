@@ -10,7 +10,7 @@ AI-powered desktop audio editing suite built with wxPython. Features speech-to-t
 - **Voice Actor Monitor**: Network-based remote recording for voice talent
 - **Multi-track editing**: Layer and mix multiple audio tracks
 - **Destructive editing**: Edit transcript text and sync audio automatically
-- **TTS Engines**: Edge TTS, Piper (on-device neural), Masakhane (African languages)
+- **TTS Engines**: Edge TTS, Piper (on-device neural)
 - **Effects**: Compressor, De-esser, EQ, Noise Gate, Normaliser, Room Remover, Auto-ducker
 
 ## Requirements
