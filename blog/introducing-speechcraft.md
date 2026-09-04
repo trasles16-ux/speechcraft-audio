@@ -13,7 +13,7 @@ SpeechCraft Studio began as an accident — or rather, as an experiment that got
 
 ## The Burrow
 
-I thought I'd build something simple to help me clean out loud breaths from audio. It's a time-consuming job, and I figured AI could automate part of it. After watching the first breath-smoothing version work, I realised the possibilities were much bigger than I'd imagined. I just had to say "I wonder if I could…" and keep going.
+I thought I'd build something simple to help me clean out loud breaths from audio. It's a time-consuming job, and I figured AI could automate part of it. After watching the first breath-smoothing version work, I realised the possibilities were much bigger than I'd imagined. I just had to say "I wonder if I could …" and keep going.
 
 SpeechCraft Studio is a bit like the Burrow from Harry Potter — one room built on top of another, each addition sparking the next.
 

@@ -4,7 +4,16 @@
 import urllib.request
 import json
 import base64
+import re
 from pathlib import Path
+
+try:
+    import markdown
+except ImportError:
+    print("Installing markdown library...")
+    import subprocess
+    subprocess.check_call(["python", "-m", "pip", "install", "markdown"])
+    import markdown
 
 # Credentials
 SECRETS_FILE = Path(r"C:\Users\trace\Documents\Personal\Secrets\Pip WordPress.txt")
@@ -26,78 +35,46 @@ auth = base64.b64encode(f"{USER}:{APP_PWD}".encode()).decode()
 content_file = Path(__file__).parent / "introducing-speechcraft.md"
 md_content = content_file.read_text(encoding="utf-8")
 
-# Parse the frontmatter and body
+# Parse the frontmatter - find the first --- line and skip everything until next ---
 lines = md_content.split("\n")
-meta = {}
 body_lines = []
-in_meta = True
+meta = {}
+skipping_frontmatter = True
+found_first_dashes = False
+found_second_dashes = False
+
 for line in lines:
-    if in_meta:
-        if line.startswith("---"):
-            in_meta = False
-            continue
-        if ":" in line:
-            key, val = line.split(":", 1)
-            meta[key.strip()] = val.strip()
+    if skipping_frontmatter:
+        if line.strip() == "---":
+            if not found_first_dashes:
+                found_first_dashes = True
+            else:
+                found_second_dashes = True
+                skipping_frontmatter = False
+        elif found_first_dashes and not found_second_dashes:
+            # Parse meta line
+            if ":" in line:
+                key, val = line.split(":", 1)
+                meta[key.strip()] = val.strip().strip('"')
+        else:
+            body_lines.append(line)
     else:
         body_lines.append(line)
 
 body_text = "\n".join(body_lines).strip()
+title = meta.get("title", "Introducing SpeechCraft Studio")
 
-# Convert to HTML for WordPress
-# Basic markdown-to-HTML conversion
-html_lines = []
-in_code_block = False
-in_list = False
-for line in body_text.split("\n"):
-    line = line.strip()
-    if line.startswith("```"):
-        if in_code_block:
-            html_lines.append("</pre>")
-            in_code_block = False
-        else:
-            html_lines.append("<pre><code>")
-            in_code_block = True
-        continue
-    if in_code_block:
-        html_lines.append(line)
-        continue
-    if line.startswith("# "):
-        html_lines.append(f"<h1>{line[2:]}</h1>")
-    elif line.startswith("## "):
-        html_lines.append(f"<h2>{line[3:]}</h2>")
-    elif line.startswith("### "):
-        html_lines.append(f"<h3>{line[4:]}</h3>")
-    elif line.startswith("- "):
-        html_lines.append(f"<li>{line[2:]}</li>")
-    elif line.startswith("   - "):
-        html_lines.append(f"  <li>{line[3:]}</li>")
-    elif line.startswith("> "):
-        html_lines.append(f"<blockquote>{line[2:]}</blockquote>")
-    elif line == "":
-        html_lines.append("")
-    else:
-        # Handle bold and links
-        text = line
-        # Links
-        import re
-        text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', text)
-        text = re.sub(r'\*([^\*]+)\*', r'<strong>\1</strong>', text)
-        html_lines.append(f"<p>{text}</p>")
-
-# Wrap list items
-html_body = "\n".join(html_lines)
-# Add list wrappers where needed
-html_body = re.sub(r'(<li>.*?</li>\n?)+', r'<ul>\g<0></ul>', html_body)
+# Convert markdown to HTML using the markdown library
+md = markdown.Markdown(extensions=['fenced_code', 'toc'])
+html_body = md.convert(body_text)
 
 # Create post data
 post_data = {
-    "title": meta.get("title", "Introducing SpeechCraft Studio"),
+    "title": title,
     "content": html_body,
-    "status": "draft",  # Start as draft for review
-    "categories": [1],  # Uncategorized - can change later
+    "status": "publish",
+    "categories": [1],
     "excerpt": "My journey building SpeechCraft Studio — an accessible audio editor for Windows, born from a breath-smoothing experiment and grew into a full-featured app.",
-    "tags": []  # Leave empty or use category IDs
 }
 
 # Make the request
