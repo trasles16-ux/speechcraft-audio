@@ -62,7 +62,7 @@ If you are contributing code (see [CONTRIBUTING.md](CONTRIBUTING.md)), every PR 
 
 ## Known limitations
 
-- **No automated test suite yet.** We rely on beta-tester reports and manual NVDA testing.
+- **Automated test suite**: 48 pytest tests across two files (`test_dialog_smoke.py` for dialog imports/constructs, `test_pure_logic.py` for core audio modules). CI runs on every PR — Linux smoke (no wx) + Windows full (wx installed).
 - **Piper voices** are community-trained; quality varies by voice.
 - **Edge TTS** requires an internet connection.
 - **The release workflow** bundles `piper_models/` and `espeak-ng-data/` only when they exist locally. A fresh CI build produces a "core" EXE without the Piper data folders.

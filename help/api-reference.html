@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SpeechCraft Studio — API Reference</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+            max-width: 900px;
+            margin: 40px auto;
+            padding: 0 20px;
+            line-height: 1.6;
+            color: #333;
+        }
+        h1 { color: #C44E3A; border-bottom: 2px solid #C44E3A; padding-bottom: 10px; }
+        h2 { color: #A33B2A; margin-top: 30px; }
+        h3 { color: #555; margin-top: 20px; }
+        code { background: #f4f4f4; padding: 2px 6px; border-radius: 3px; }
+        pre { background: #f4f4f4; padding: 15px; overflow-x: auto; border-radius: 5px; }
+        .class { background: #e8f4f8; padding: 15px; border-left: 4px solid #3498db; margin: 15px 0; }
+        .method { margin: 10px 0 10px 20px; }
+        .param { color: #666; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+
+<h1>SpeechCraft Studio — API Reference</h1>
+
+<p>For developers contributing to SpeechCraft. This document covers the main classes and their public APIs.</p>
+
+<h2>Main Application</h2>
+
+<div class="class">
+<h3>class SpeechCraftFrame(TTSMenuMixin, wx.Frame)</h3>
+<p>The main application frame. Inherits from <code>TTSMenuMixin</code> for TTS functionality and <code>wx.Frame</code> for window management.</p>
+
+<div class="method">
+<h4>Key Methods</h4>
+<dl>
+    <dt><code>__init__(parent, title="SpeechCraft Studio")</code></dt>
+    <dd class="param">Initialise the main frame with menus, toolbar, and status bar.</dd>
+
+    <dt><code>on_help_manual(event)</code></dt>
+    <dd class="param">Open the user manual HTML file in the default browser.</dd>
+
+    <dt><code>on_help_quick(event)</code></dt>
+    <dd class="param">Open the quick reference HTML file in the default browser.</dd>
+
+    <dt><code>on_report_bug(event)</code></dt>
+    <dd class="param">Open the in-app bug report dialog. Collects error log and pre-fills GitHub issue URL.</dd>
+</dl>
+</div>
+</div>
+
+<h2>Text-to-Speech Mixin</h2>
+
+<div class="class">
+<h3>class TTSMenuMixin</h3>
+<p>Mixin that provides TTS menu handlers. Extracted from <code>SpeechCraftFrame</code> to reduce coupling.</p>
+
+<div class="method">
+<h4>Methods Inherited by SpeechCraftFrame</h4>
+<dl>
+    <dt><code>on_edge_tts(event)</code></dt>
+    <dd class="param">Open the Edge TTS dialog. Uses <code>edge_tts_engine.EdgeTTSEngine</code>.</dd>
+
+    <dt><code>on_piper_tts(event)</code></dt>
+    <dd class="param">Open the Piper TTS dialog. Uses <code>piper_tts_engine.PiperTTSEngine</code>.</dd>
+</dl>
+</div>
+</div>
+
+<h2>Dialog Modules</h2>
+
+<h3>dialogs.effects_dialogs</h3>
+<p>Contains all audio effect dialogs and the <code>AudioClipboard</code> class.</p>
+
+<div class="class">
+<h4>class AudioClipboard</h4>
+<p>Manages audio data for copy/paste operations across tracks. Requires <code>sounddevice</code> on Windows.</p>
+</div>
+
+<div class="class">
+<h4>Effect Dialogs</h4>
+<dl>
+    <dt><code>EffectSettingsDialog</code></dt>
+    <dd class="param">Base class for effect dialogs with Before/After toggle.</dd>
+
+    <dt><code>CompressorPresetDialog</code></dt>
+    <dd class="param">Compressor settings with preset save/load.</dd>
+
+    <dt><code>EQPresetDialog</code></dt>
+    <dd class="param">Parametric equalizer with frequency/gain bands.</dd>
+
+    <dt><code>BreathSmoothingPresetDialog</code></dt>
+    <dd class="param">Breath detection threshold and attenuation settings.</dd>
+
+    <dt><code>RoomToneMatchDialog</code></dt>
+    <dd class="param">Sample and apply room tone noise profile.</dd>
+
+    <dt><code>BatchProcessDialog</code></dt>
+    <dd class="param">Apply effects to multiple files in batch.</dd>
+</dl>
+</div>
+
+<h3>dialogs.recording_dialogs</h3>
+<p>Contains recording and studio dialogs.</p>
+
+<div class="class">
+<h4>class RecordingDialog</h4>
+<p>Simple recording dialog for capturing audio from microphone.</p>
+</div>
+
+<div class="class">
+<h4>class StudioRecordingDialog</h4>
+<p>Full studio with real-time transcription panel and line-by-line placement.</p>
+</div>
+</div>
+
+<h2>Pure Logic Modules</h2>
+
+<h3>auto_ducker.py</h3>
+<div class="class">
+<pre>class AutoDucker:
+    def duck_audio(voice_track, background_track, threshold_db=-20, ratio=4.0) -> AudioSegment:</pre>
+<p>Duck background audio when voice is detected above threshold.</p>
+</div>
+
+<h3>breath_smoothing.py</h3>
+<div class="class">
+<pre>class BreathSmoothing:
+    def detect_breaths(audio, threshold=0.01) -> list[tuple]:
+    def attenuate_breaths(audio, breaths, attenuation_db=6.0) -> AudioSegment:</pre>
+<p>RMS-based breath detection and attenuation.</p>
+</div>
+
+<h3>word_alignment.py</h3>
+<div class="class">
+<pre>class WordAligner:
+    def align_words(audio, words, timestamps) -> list[dict]:
+    def export_alignment(alignments, output_path):</pre>
+<p>Word-level audio editing and timestamp alignment.</p>
+</div>
+
+<h3>config.py</h3>
+<div class="class">
+<pre>DEFAULT_COMPRESSOR = {
+    "threshold_db": -20,
+    "ratio": 4.0,
+    "attack_ms": 5,
+    "release_ms": 50,
+    "knee_db": 10
+}
+
+DEFAULT_EQ = {
+    "bands": [
+        {"freq": 80, "gain": 0},
+        {"freq": 1000, "gain": 0},
+        {"freq": 3000, "gain": 0},
+        {"freq": 10000, "gain": 0}
+    ]
+}
+
+DEFAULT_BREATH = {
+    "threshold": 0.01,
+    "attenuation_db": 6.0
+}</pre>
+<p>Default effect presets.</p>
+</div>
+
+<h2>Testing</h2>
+
+<h3>Running Tests</h3>
+<pre>pytest tests/                          # All tests
+pytest tests/test_dialog_smoke.py      # Dialog imports and constructs
+pytest tests/test_pure_logic.py        # Core logic modules
+pytest tests/test_pure_logic.py -v     # Verbose output</pre>
+
+<h3>Test Structure</h3>
+<ul>
+    <li><code>tests/conftest.py</code> — Session-scoped <code>wx_app</code> fixture</li>
+    <li><code>tests/test_dialog_smoke.py</code> — 27 tests for dialog classes</li>
+    <li><code>tests/test_pure_logic.py</code> — 21 tests for audio modules</li>
+</ul>
+
+<h3>CI</h3>
+<ul>
+    <li>Linux smoke: import tests + pure logic (no wx required)</li>
+    <li>Windows full: all tests including wx dialogs</li>
+    <li>Build: PyInstaller produces <code>SpeechCraft-Windows.zip</code></li>
+</ul>
+
+<h2>Contributing</h2>
+<p>See <a href="CONTRIBUTING.md">CONTRIBUTING.md</a> for development workflow and conventions.</p>
+
+<p><em>Last updated: September 2026</em></p>
+
+</body>
+</html>

@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SpeechCraft Studio — User Manual</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 0 20px;
+            line-height: 1.6;
+            color: #333;
+        }
+        h1 { color: #C44E3A; border-bottom: 2px solid #C44E3A; padding-bottom: 10px; }
+        h2 { color: #A33B2A; margin-top: 30px; }
+        h3 { color: #555; }
+        code { background: #f4f4f4; padding: 2px 6px; border-radius: 3px; }
+        pre { background: #f4f4f4; padding: 15px; overflow-x: auto; border-radius: 5px; }
+        ul { padding-left: 20px; }
+        li { margin: 8px 0; }
+        .note { background: #fff3cd; padding: 15px; border-left: 4px solid #ffc107; margin: 20px 0; }
+        .warning { background: #f8d7da; padding: 15px; border-left: 4px solid #dc3545; margin: 20px 0; }
+        a { color: #C44E3A; }
+    </style>
+</head>
+<body>
+
+<h1>SpeechCraft Studio User Manual</h1>
+
+<p>Welcome to SpeechCraft Studio — an accessible audio editing suite for audio-description producers, voice actors, and content creators.</p>
+
+<h2>Getting Started</h2>
+
+<h3>System Requirements</h3>
+<ul>
+    <li>Windows 10 or 11</li>
+    <li>Python 3.11 (included in the standalone EXE)</li>
+    <li>FFmpeg (auto-downloaded on first run if missing)</li>
+    <li>Screen reader: NVDA 2024.1+, JAWS 2024+, or Windows Narrator</li>
+</ul>
+
+<h3>First Run</h3>
+<p>On first launch, SpeechCraft will:</p>
+<ol>
+    <li>Download FFmpeg if not found on your system</li>
+    <li>Create a project folder in <code>%APPDATA%\SpeechCraft</code></li>
+    <li>Set up default effects presets</li>
+</ol>
+
+<h2>Menu Overview</h2>
+
+<h3>File Menu</h3>
+<ul>
+    <li><strong>New Project</strong> — Create a fresh project with no tracks</li>
+    <li><strong>Open Project</strong> — Load an existing <code>.speechcraft</code> project file</li>
+    <li><strong>Save Project</strong> — Save current project (Ctrl+S)</li>
+    <li><strong>Save Project As...</strong> — Save as a new file</li>
+    <li><strong>Import Audio</strong> — Add audio files to the current project</li>
+    <li><strong>Export Audio</strong> — Render and export the project to WAV or MP3</li>
+    <li><strong>Exit</strong> — Close the application</li>
+</ul>
+
+<h3>Editing Menu</h3>
+<ul>
+    <li><strong>Undo</strong> — Undo last action (Ctrl+Z)</li>
+    <li><strong>Redo</strong> — Redo last undone action (Ctrl+Y)</li>
+    <li><strong>Cut</strong> — Cut selected audio (Ctrl+X)</li>
+    <li><strong>Copy</strong> — Copy selected audio (Ctrl+C)</li>
+    <li><strong>Paste</strong> — Paste from clipboard (Ctrl+V)</li>
+    <li><strong>Delete</strong> — Delete selected audio (Del)</li>
+    <li><strong>Select All</strong> — Select entire track (Ctrl+A)</li>
+</ul>
+
+<h3>Effects Menu</h3>
+<ul>
+    <li><strong>Compressor</strong> — Reduce dynamic range for consistent volume</li>
+    <li><strong>De-esser</strong> — Reduce harsh sibilance sounds</li>
+    <li><strong>Equalizer</strong> — Adjust frequency bands (parametric EQ)</li>
+    <li><strong>Noise Gate</strong> — Remove background noise between speech</li>
+    <li><strong>Normalise</strong> — Boost audio to peak at -1 dB</li>
+    <li><strong>Room Tone Match</strong> — Match background noise profile from sample</li>
+    <li><strong>Batch Process</strong> — Apply effects to multiple files</li>
+</ul>
+
+<h3>Tools Menu</h3>
+<ul>
+    <li><strong>Breath Smoothing</strong> — Automatically reduce breath sounds</li>
+    <li><strong>Auto-Ducker</strong> — Duck background music during speech</li>
+    <li><strong>Word Alignment</strong> — Sync transcript text to audio timestamps</li>
+</ul>
+
+<h3>Record Menu</h3>
+<ul>
+    <li><strong>Record New Track</strong> — Record from microphone to new track</li>
+    <li><strong>Studio Recording</strong> — Record with real-time transcription</li>
+</ul>
+
+<h3>TTS Menu</h3>
+<ul>
+    <li><strong>Edge TTS</strong> — Microsoft cloud-based text-to-speech (requires internet)</li>
+    <li><strong>Piper TTS</strong> — Local neural TTS (requires <code>piper.exe</code> setup)</li>
+</ul>
+
+<h3>Help Menu</h3>
+<ul>
+    <li><strong>User Manual</strong> — This document</li>
+    <li><strong>Quick Reference</strong> — Keyboard shortcuts and common tasks</li>
+    <li><strong>Report a Bug...</strong> — Open bug report dialog (collects error log automatically)</li>
+</ul>
+
+<h2>Recording</h2>
+
+<h3>Basic Recording</h3>
+<ol>
+    <li>Select <strong>Record → Record New Track</strong> (or press Ctrl+R)</li>
+    <li>Choose your input device from the dialog</li>
+    <li>Press Record to start</li>
+    <li>Press Stop when done</li>
+</ol>
+
+<h3>Studio Recording with Transcription</h3>
+<ol>
+    <li>Select <strong>Record → Studio Recording</strong></li>
+    <li>The studio opens with real-time transcription panel</li>
+    <li>Record your voice — transcription appears as you speak</li>
+    <li>Use line-by-line placement to position transcript text</li>
+    <li>Save project when finished</li>
+</ol>
+
+<h2>Effects Usage</h2>
+
+<h3>Before & After Comparison</h3>
+<p>Each effect dialog has a "Before & After" toggle. Use this to compare the original and processed audio:</p>
+<ol>
+    <li>Open an effect dialog (e.g., Effects → Compressor)</li>
+    <li>Adjust settings and preview</li>
+    <li>Toggle "Before & After" to hear the difference</li>
+    <li>Click Apply to commit changes</li>
+</ol>
+
+<h3>Presets</h3>
+<p>Save your favourite effect settings as presets:</p>
+<ol>
+    <li>Open any effect dialog</li>
+    <li>Adjust settings to your liking</li>
+    <li>Click "Save Preset" and give it a name</li>
+    <li>Load presets later from the same dialog</li>
+</ol>
+
+<h2>Text-to-Speech</h2>
+
+<h3>Edge TTS</h3>
+<p>Microsoft cloud-based TTS — no local files needed, just internet:</p>
+<ol>
+    <li>Select <strong>TTS → Edge TTS</strong></li>
+    <li>Choose a voice from the dropdown</li>
+    <li>Paste or type your text</li>
+    <li>Click "Generate" to create audio</li>
+</ol>
+
+<h3>Piper TTS</h3>
+<p>Local neural TTS — works offline, no internet required:</p>
+<ol>
+    <li>Download Piper from <a href="https://github.com/rhasspy/piper/releases">GitHub</a></li>
+    <li>Place <code>piper.exe</code> and all DLLs in the project folder</li>
+    <li>Select <strong>TTS → Piper TTS</strong></li>
+    <li>Choose a voice and generate audio</li>
+</ol>
+
+<div class="note">
+<strong>Note for NVDA users:</strong> All comboboxes and text controls now announce proper names. If you hear "unknown", please report it via Help → Report a Bug.
+</div>
+
+<h2>Keyboard Shortcuts</h2>
+<table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; width: 100%;">
+    <tr style="background: #f4f4f4;">
+        <th>Shortcut</th>
+        <th>Action</th>
+    </tr>
+    <tr><td>Ctrl+N</td><td>New Project</td></tr>
+    <tr><td>Ctrl+O</td><td>Open Project</td></tr>
+    <tr><td>Ctrl+S</td><td>Save Project</td></tr>
+    <tr><td>Ctrl+R</td><td>Record New Track</td></tr>
+    <tr><td>Ctrl+Z</td><td>Undo</td></tr>
+    <tr><td>Ctrl+Y</td><td>Redo</td></tr>
+    <tr><td>F1</td><td>User Manual</td></tr>
+    <tr><td>F2</td><td>Quick Reference</td></tr>
+</table>
+
+<h2>Bug Reporting</h2>
+<p>If you encounter a bug:</p>
+<ol>
+    <li>Select <strong>Help → Report a Bug...</strong></li>
+    <li>Fill in the dialog (what you expected, what happened, steps to reproduce)</li>
+    <li>Click "Generate Report" — this opens your browser with a pre-filled GitHub issue</li>
+    <li>The report URL is also copied to your clipboard as fallback</li>
+</ol>
+
+<p>If the app crashes, check <code>speechcraft_error.log</code> in the project folder for details.</p>
+
+<h2>Project Files</h2>
+<p>Projects are saved as <code>.speechcraft</code> files — these are JSON files that reference audio files by path. Keep your audio files in the same folder as the project file for portability.</p>
+
+<h2>Support</h2>
+<ul>
+    <li><strong>Bug reports:</strong> Help → Report a Bug or <a href="https://github.com/trasles16-ux/speechcraft-audio/issues">GitHub Issues</a></li>
+    <li><strong>Security:</strong> Email <a href="mailto:tracy@tracysmith.co.za">tracy@tracysmith.co.za</a></li>
+    <li><strong>Website:</strong> <a href="https://github.com/trasles16-ux/speechcraft-audio">GitHub Repository</a></li>
+</ul>
+
+<p><em>Last updated: September 2026</em></p>
+
+</body>
+</html>

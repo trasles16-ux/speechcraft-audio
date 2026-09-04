@@ -13,9 +13,18 @@ All notable changes to SpeechCraft Audio are documented here. The format follows
 ### Removed
 - **Masakhane TTS engine**: the engine, its menu item, dialog method, and PyInstaller spec entry were removed. The engine had no external callers and was the smallest of the three engines.
 
+### Refactoring (decomposition)
+- **PR #3**: Extracted 6 effect dialogs + `AudioClipboard` to `dialogs/effects_dialogs.py` (1624 lines). Fixed pre-existing bugs: invalid `GetSizerAndFit()` calls, `LB_READONLY` → `LB_SINGLE`, `get_values()` return types.
+- **PR #4**: Extracted `RecordingDialog` + `StudioRecordingDialog` to `dialogs/recording_dialogs.py` (578 lines).
+- **PR #5**: Extracted TTS menu handlers (`on_edge_tts`, `on_piper_tts`) to `main_frame_tts.py` as `TTSMenuMixin`. `SpeechCraftFrame` now inherits from it.
+- **PR #6**: Added 27 functional dialog tests covering all extracted classes. Fixed 6 pre-existing bugs caught by tests.
+- **PR #7**: Added 21 pure-logic module tests for `auto_ducker`, `breath_smoothing`, `word_alignment`, `config`.
+
+`audio_editor.py` reduced from 5091 → 2730 lines (−46%).
+
 ### Documentation
 - README rewritten with NVDA testing guidance, Piper setup notes, known limitations, and a "How to report a bug" section.
-- New: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, `CHANGELOG.md`.
+- New: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, `CHANGELOG.md`, `AGENTS.md`.
 - New issue templates: bug report, feature request, accessibility issue.
 
 ## [3.0.2] — 2026

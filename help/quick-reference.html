@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SpeechCraft Studio — Quick Reference</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 0 20px;
+            line-height: 1.6;
+            color: #333;
+        }
+        h1 { color: #C44E3A; border-bottom: 2px solid #C44E3A; padding-bottom: 10px; }
+        h2 { color: #A33B2A; margin-top: 25px; }
+        code { background: #f4f4f4; padding: 2px 6px; border-radius: 3px; }
+        table { border-collapse: collapse; width: 100%; margin: 15px 0; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+        th { background: #f4f4f4; color: #333; }
+        tr:nth-child(even) { background: #fafafa; }
+        .shortcut { font-weight: bold; color: #C44E3A; }
+    </style>
+</head>
+<body>
+
+<h1>SpeechCraft Studio — Quick Reference</h1>
+
+<h2>Keyboard Shortcuts</h2>
+
+<table>
+    <tr><th>Action</th><th>Shortcut</th></tr>
+    <tr><td>New Project</td><td><span class="shortcut">Ctrl+N</span></td></tr>
+    <tr><td>Open Project</td><td><span class="shortcut">Ctrl+O</span></td></tr>
+    <tr><td>Save Project</td><td><span class="shortcut">Ctrl+S</span></td></tr>
+    <tr><td>Record New Track</td><td><span class="shortcut">Ctrl+R</span></td></tr>
+    <tr><td>Undo</td><td><span class="shortcut">Ctrl+Z</span></td></tr>
+    <tr><td>Redo</td><td><span class="shortcut">Ctrl+Y</span></td></tr>
+    <tr><td>Cut</td><td><span class="shortcut">Ctrl+X</span></td></tr>
+    <tr><td>Copy</td><td><span class="shortcut">Ctrl+C</span></td></tr>
+    <tr><td>Paste</td><td><span class="shortcut">Ctrl+V</span></td></tr>
+    <tr><td>Delete</td><td><span class="shortcut">Del</span></td></tr>
+    <tr><td>Select All</td><td><span class="shortcut">Ctrl+A</span></td></tr>
+    <tr><td>User Manual</td><td><span class="shortcut">F1</span></td></tr>
+    <tr><td>Quick Reference</td><td><span class="shortcut">F2</span></td></tr>
+</table>
+
+<h2>Common Workflows</h2>
+
+<h3>Quick Recording & Export</h3>
+<ol>
+    <li><span class="shortcut">Ctrl+R</span> to record</li>
+    <li>Adjust volume with <strong>Effects → Normalise</strong></li>
+    <li>Reduce breaths with <strong>Tools → Breath Smoothing</strong></li>
+    <li><strong>File → Export Audio</strong> to save as WAV or MP3</li>
+</ol>
+
+<h3>Multi-Track Project</h3>
+<ol>
+    <li><strong>File → New Project</strong></li>
+    <li><strong>File → Import Audio</strong> to add tracks</li>
+    <li><strong>Record</strong> additional voice tracks as needed</li>
+    <li>Apply effects to individual tracks or the mix</li>
+    <li><strong>File → Export Audio</strong> to render</li>
+</ol>
+
+<h3>Audio Description Production</h3>
+<ol>
+    <li>Import video or audio to describe</li>
+    <li>Record voice-over description</li>
+    <li>Use <strong>Studio Recording</strong> for real-time transcription</li>
+    <li>Apply <strong>Auto-Ducker</strong> to balance voice and background</li>
+    <li>Export final mix</li>
+</ol>
+
+<h2>Effects Quick Guide</h2>
+
+<table>
+    <tr><th>Effect</th><th>Use When</th><th>Tip</th></tr>
+    <tr><td>Compressor</td><td>Inconsistent voice volume</td><td>Start with 4:1 ratio, -20 dB threshold</td></tr>
+    <tr><td>De-esser</td><td>Harsh "s" and "t" sounds</td><td>Only reduce by 2-3 dB to stay natural</td></tr>
+    <tr><td>Equalizer</td><td>Muddy or tinny voice</td><td>Cut lows below 80 Hz, boost presence at 3-5 kHz</td></tr>
+    <tr><td>Noise Gate</td><td>Background hum or hiss</td><td>Set just above noise floor</td></tr>
+    <tr><td>Normalise</td><td>Audio too quiet</td><td>Always to -1 dB peak</td></tr>
+    <tr><td>Room Tone Match</td><td>Recording in different spaces</td><td>Sample the room tone first</td></tr>
+</table>
+
+<h2>TTS Quick Guide</h2>
+
+<table>
+    <tr><th>Engine</th><th>Best For</th><th>Requirements</th></tr>
+    <tr><td>Edge TTS</td><td>Quick drafts, cloud voices</td><td>Internet connection</td></tr>
+    <tr><td>Piper TTS</td><td>Offline work, custom voices</td><td><code>piper.exe</code> + DLLs in project folder</td></tr>
+</table>
+
+<h2>NVDA Navigation Tips</h2>
+
+<ul>
+    <li>Use <span class="shortcut">Tab</span> to move between controls in dialogs</li>
+    <li>All comboboxes and text fields announce proper names</li>
+    <li>Press <span class="shortcut">Esc</span> to close any dialog without saving</li>
+    <li>Use the <strong>Reports menu</strong> for keyboard shortcut reference</li>
+</ul>
+
+<h2>Troubleshooting</h2>
+
+<table>
+    <tr><th>Problem</th><th>Solution</th></tr>
+    <tr><td>FFmpeg not found</td><td>Restart app — it downloads FFmpeg automatically</td></tr>
+    <tr><td>Piper shows "Setup Error"</td><td>Download <code>piper.exe</code> and DLLs from GitHub releases</td></tr>
+    <tr><td>Edge TTS fails</td><td>Check internet connection</td></tr>
+    <tr><td>Audio won't play</td><td>Check Windows sound settings and permissions</td></tr>
+    <tr><td>Crash on startup</td><td>Check <code>speechcraft_error.log</code> in project folder</td></tr>
+</table>
+
+<h2>Project File Info</h2>
+
+<ul>
+    <li>Project files have <code>.speechcraft</code> extension</li>
+    <li>They are JSON text files — portable and human-readable</li>
+    <li>Keep audio files in the same folder as the project file</li>
+    <li>Project data is stored in <code>%APPDATA%\SpeechCraft</code></li>
+</ul>
+
+<p><em>Press <span class="shortcut">F1</span> for the full User Manual</em></p>
+
+</body>
+</html>

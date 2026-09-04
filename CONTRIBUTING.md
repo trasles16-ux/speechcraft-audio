@@ -63,7 +63,7 @@ python run_speechcraft.py
 
 ## Tests
 
-There is no full test suite yet. The smoke test at `tests/test_dialog_smoke.py` imports each TTS engine module to catch the kind of `AttributeError` that broke the Piper dialog. If you add a new engine module, add it to that test.
+- **Test suite**: 48 pytest tests across two files — `tests/test_dialog_smoke.py` (27 tests for dialog imports/constructs) and `tests/test_pure_logic.py` (21 tests for core audio modules). CI runs on every PR (Linux smoke + Windows full).
 
 When you fix a bug, please add a regression test in the same PR. Even a one-line test that exercises the buggy path helps.
 
