@@ -41,8 +41,24 @@ DIALOG_METHODS = [
     ("piper_tts_engine", "PiperTTSEngine", "get_voices"),
 ]
 
+# Modules that must import cleanly without wx being alive.
+# ``dialogs.effects_dialogs`` requires pydub / numpy / sounddevice /
+# wx at module-load time, so it sits in the wx-gated section below.
 BUG_REPORT_MODULES = [
     "crash_submit",
+]
+
+# Dialog classes that live in dialogs/effects_dialogs.py and must be
+# importable for the audio_editor.py extraction (PR #3) to work.
+# Listed as (module, class_name) so an accidental rename fails loud.
+EFFECTS_DIALOG_CLASSES = [
+    ("dialogs.effects_dialogs", "AudioClipboard"),
+    ("dialogs.effects_dialogs", "EffectSettingsDialog"),
+    ("dialogs.effects_dialogs", "BreathSmoothingPresetDialog"),
+    ("dialogs.effects_dialogs", "CompressorPresetDialog"),
+    ("dialogs.effects_dialogs", "EQPresetDialog"),
+    ("dialogs.effects_dialogs", "RoomToneMatchDialog"),
+    ("dialogs.effects_dialogs", "BatchProcessDialog"),
 ]
 
 
@@ -80,6 +96,57 @@ def test_log_only_modules_import(module_name: str) -> None:
     """crash_submit is dependency-light and must always import."""
     mod = importlib.import_module(module_name)
     assert mod is not None
+
+
+@needs_wx
+@pytest.mark.parametrize("module_name,class_name", EFFECTS_DIALOG_CLASSES)
+def test_effects_dialog_classes_importable(
+    module_name: str, class_name: str
+) -> None:
+    """Every dialog extracted to dialogs/effects_dialogs.py must be
+    importable from there. If a class is renamed in one place but
+    not the other, this test fails -- which is exactly the failure
+    mode that a 5148-line audio_editor.py would have hidden."""
+    mod = importlib.import_module(module_name)
+    cls = getattr(mod, class_name, None)
+    assert cls is not None, (
+        f"{module_name}.{class_name} is missing. "
+        f"Either the class was renamed (update this test), or the "
+        f"audio_editor.py extraction dropped a class."
+    )
+
+
+@pytest.mark.parametrize("module_name,class_name", EFFECTS_DIALOG_CLASSES)
+def test_audio_editor_imports_extracted_classes(
+    module_name: str, class_name: str
+) -> None:
+    """audio_editor.py must re-export every extracted class. Catches
+    the case where someone moves a class into effects_dialogs.py
+    but forgets to add it to the ``from dialogs.effects_dialogs
+    import (...)`` line in audio_editor.py."""
+    # Importing audio_editor pulls in wx + numpy + the full app --
+    # we cannot do that without wx installed, so gate this on wx.
+    if not _wx_available():
+        pytest.skip("wxPython not installed")
+    try:
+        import audio_editor
+    except ImportError as exc:
+        # If audio_editor fails to import for any reason (missing
+        # dep, broken module), the same root cause will fail every
+        # parametrised case. Skip them all with a single targeted
+        # message rather than producing 7 identical tracebacks.
+        pytest.skip(
+            f"audio_editor.py cannot be imported ({exc.__class__.__name__}: "
+            f"{exc}). Fix the import error first; the per-class checks "
+            f"will become meaningful once audio_editor loads."
+        )
+
+    assert hasattr(audio_editor, class_name), (
+        f"audio_editor.{class_name} is missing. "
+        f"The extraction moved the class to dialogs.effects_dialogs "
+        f"but audio_editor.py does not re-export it. Add "
+        f"'{class_name}' to the import line in audio_editor.py."
+    )
 
 
 @pytest.mark.parametrize("module_name,class_name,method_name", DIALOG_METHODS)
