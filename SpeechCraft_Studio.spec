@@ -41,7 +41,6 @@ hiddenimports = [
     'speech_recognition',
     'edge_tts',
     'edge_tts_engine',
-    'masakhane_tts_engine',
     'piper_tts_engine',
     # Logic modules (safe_import in audio_editor.py)
     'audio_tracks',
