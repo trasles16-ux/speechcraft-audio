@@ -61,6 +61,13 @@ EFFECTS_DIALOG_CLASSES = [
     ("dialogs.effects_dialogs", "BatchProcessDialog"),
 ]
 
+# Dialog classes that live in dialogs/recording_dialogs.py and must
+# be importable for the audio_editor.py extraction (PR #4) to work.
+RECORDING_DIALOG_CLASSES = [
+    ("dialogs.recording_dialogs", "RecordingDialog"),
+    ("dialogs.recording_dialogs", "StudioRecordingDialog"),
+]
+
 
 def _wx_available() -> bool:
     try:
@@ -99,14 +106,15 @@ def test_log_only_modules_import(module_name: str) -> None:
 
 
 @needs_wx
-@pytest.mark.parametrize("module_name,class_name", EFFECTS_DIALOG_CLASSES)
-def test_effects_dialog_classes_importable(
+@pytest.mark.parametrize("module_name,class_name",
+                         EFFECTS_DIALOG_CLASSES + RECORDING_DIALOG_CLASSES)
+def test_extracted_dialog_classes_importable(
     module_name: str, class_name: str
 ) -> None:
-    """Every dialog extracted to dialogs/effects_dialogs.py must be
-    importable from there. If a class is renamed in one place but
-    not the other, this test fails -- which is exactly the failure
-    mode that a 5148-line audio_editor.py would have hidden."""
+    """Every dialog extracted to ``dialogs/`` must be importable from
+    there. If a class is renamed in one place but not the other, this
+    test fails -- which is exactly the failure mode that a 5148-line
+    audio_editor.py would have hidden."""
     mod = importlib.import_module(module_name)
     cls = getattr(mod, class_name, None)
     assert cls is not None, (
@@ -116,14 +124,15 @@ def test_effects_dialog_classes_importable(
     )
 
 
-@pytest.mark.parametrize("module_name,class_name", EFFECTS_DIALOG_CLASSES)
+@pytest.mark.parametrize("module_name,class_name",
+                         EFFECTS_DIALOG_CLASSES + RECORDING_DIALOG_CLASSES)
 def test_audio_editor_imports_extracted_classes(
     module_name: str, class_name: str
 ) -> None:
     """audio_editor.py must re-export every extracted class. Catches
-    the case where someone moves a class into effects_dialogs.py
-    but forgets to add it to the ``from dialogs.effects_dialogs
-    import (...)`` line in audio_editor.py."""
+    the case where someone moves a class into ``dialogs/`` but forgets
+    to add it to the ``from dialogs.X import (...)`` line in
+    audio_editor.py."""
     # Importing audio_editor pulls in wx + numpy + the full app --
     # we cannot do that without wx installed, so gate this on wx.
     if not _wx_available():
@@ -143,7 +152,7 @@ def test_audio_editor_imports_extracted_classes(
 
     assert hasattr(audio_editor, class_name), (
         f"audio_editor.{class_name} is missing. "
-        f"The extraction moved the class to dialogs.effects_dialogs "
+        f"The extraction moved the class to {module_name} "
         f"but audio_editor.py does not re-export it. Add "
         f"'{class_name}' to the import line in audio_editor.py."
     )
