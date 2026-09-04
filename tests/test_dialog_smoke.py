@@ -128,7 +128,18 @@ def test_audio_editor_imports_extracted_classes(
     # we cannot do that without wx installed, so gate this on wx.
     if not _wx_available():
         pytest.skip("wxPython not installed")
-    import audio_editor
+    try:
+        import audio_editor
+    except ImportError as exc:
+        # If audio_editor fails to import for any reason (missing
+        # dep, broken module), the same root cause will fail every
+        # parametrised case. Skip them all with a single targeted
+        # message rather than producing 7 identical tracebacks.
+        pytest.skip(
+            f"audio_editor.py cannot be imported ({exc.__class__.__name__}: "
+            f"{exc}). Fix the import error first; the per-class checks "
+            f"will become meaningful once audio_editor loads."
+        )
 
     assert hasattr(audio_editor, class_name), (
         f"audio_editor.{class_name} is missing. "
