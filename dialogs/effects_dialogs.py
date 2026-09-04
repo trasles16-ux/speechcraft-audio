@@ -1373,7 +1373,9 @@ class BatchProcessDialog(wx.Dialog):
         if self.preset_sizer.GetStaticBox().GetParent() is not None:
             self.preset_sizer.GetStaticBox().GetParent().GetSizer().Fit(self.preset_sizer.GetStaticBox())
         self.Layout()
-        self.GetSizer().Fit(self)
+        sizer = self.GetSizer()
+        if sizer is not None:
+            sizer.Fit(self)
 
     def _on_preset_selected(self, event=None):
         for name, radio in self.preset_radios.items():
