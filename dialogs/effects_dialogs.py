@@ -1370,7 +1370,8 @@ class BatchProcessDialog(wx.Dialog):
         # Build param controls based on effect type
         self._build_param_controls()
 
-        self.preset_sizer.GetStaticBox().GetParent().GetSizer().Fit(self.preset_sizer.GetStaticBox())
+        if self.preset_sizer.GetStaticBox().GetParent() is not None:
+            self.preset_sizer.GetStaticBox().GetParent().GetSizer().Fit(self.preset_sizer.GetStaticBox())
         self.Layout()
         self.GetSizer().Fit(self)
 
