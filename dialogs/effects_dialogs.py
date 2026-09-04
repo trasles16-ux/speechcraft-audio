@@ -473,7 +473,8 @@ class CompressorPresetDialog(wx.Dialog):
             self.right_sizer.Add(row, 0, wx.ALL, 4)
             self.advanced_controls[pn] = slider
 
-        self.right_panel.GetSizerAndFit()
+        self.right_sizer.Layout()
+        self.right_sizer.Fit(self.right_panel)
         main.Add(self.right_panel, 2, wx.ALL | wx.EXPAND, 10)
         outer.Add(main, 1, wx.EXPAND)
 
@@ -512,7 +513,8 @@ class CompressorPresetDialog(wx.Dialog):
         self.show_advanced = self.advanced_check.GetValue()
         for ctrl in self.advanced_controls.values():
             ctrl.Show(self.show_advanced)
-        self.right_panel.GetSizerAndFit()
+        self.right_sizer.Layout()
+        self.right_sizer.Fit(self.right_panel)
         self.SetSizerAndFit()
         self.Centre()
 
@@ -541,7 +543,8 @@ class CompressorPresetDialog(wx.Dialog):
                 st.SetLabel(f"{vals[key]} (={vals[key]*0.1:.1f}ms)")
             else:
                 st.SetLabel(str(val))
-        self.right_panel.GetSizerAndFit()
+        self.right_sizer.Layout()
+        self.right_sizer.Fit(self.right_panel)
 
     def get_values(self):
         """Return (preset_name, params_dict)."""
@@ -793,7 +796,8 @@ class EQPresetDialog(wx.Dialog):
         for slider in self.band_sliders.values():
             slider.Show(self.show_advanced)
         self._hint_st.Show(self.show_advanced)
-        self.right_panel.GetSizerAndFit()
+        self.right_sizer.Layout()
+        self.right_sizer.Fit(self.right_panel)
         self.SetSizerAndFit()
         self.Centre()
 
@@ -823,18 +827,19 @@ class EQPresetDialog(wx.Dialog):
                 slider.SetValue(int(gain))
 
     def get_values(self):
-        """Return list of (freq, gain_db) tuples for all 5 bands."""
+        """Return dict of {freq: gain_db} for all bands."""
         if self.show_advanced:
-            return [(freq, self.band_sliders[label].GetValue())
+            return {freq: self.band_sliders[label].GetValue()
                     for freq, label in zip(audio_effects.Equalizer.BAND_FREQUENCIES,
-                                           audio_effects.Equalizer.BAND_LABELS)]
+                                           audio_effects.Equalizer.BAND_LABELS)}
         else:
             # Use same logic as _update_display to get bands
             if self.selected_preset in config.EQ_PRESETS:
-                return config.EQ_PRESETS[self.selected_preset]["bands"]
+                return {freq: gain for freq, gain in config.EQ_PRESETS[self.selected_preset]["bands"]}
             else:
                 eq, _, _ = preset_manager.load_custom_presets()
-                return eq.get(self.selected_preset, {}).get("bands", [(0, 0)] * 5)
+                bands = eq.get(self.selected_preset, {}).get("bands", [(0, 0)] * 5)
+                return {freq: gain for freq, gain in bands}
 
     def get_preset_name(self):
         return self.selected_preset
@@ -1240,7 +1245,7 @@ class BatchProcessDialog(wx.Dialog):
 
         # File list
         sizer.Add(wx.StaticText(panel, label="Audio files found:"), 0, wx.LEFT | wx.BOTTOM, 4)
-        self.file_list = wx.ListBox(panel, style=wx.LB_SINGLE | wx.LB_READONLY)
+        self.file_list = wx.ListBox(panel, style=wx.LB_SINGLE)
         sizer.Add(self.file_list, 1, wx.EXPAND | wx.ALL, 4)
 
         panel.SetSizerAndFit(sizer)
@@ -1365,9 +1370,12 @@ class BatchProcessDialog(wx.Dialog):
         # Build param controls based on effect type
         self._build_param_controls()
 
-        self.preset_sizer.GetStaticBox().GetParent().GetSizer().Fit(self.preset_sizer.GetStaticBox())
+        if self.preset_sizer.GetStaticBox().GetParent() is not None:
+            self.preset_sizer.GetStaticBox().GetParent().GetSizer().Fit(self.preset_sizer.GetStaticBox())
         self.Layout()
-        self.GetSizer().Fit(self)
+        sizer = self.GetSizer()
+        if sizer is not None:
+            sizer.Fit(self)
 
     def _on_preset_selected(self, event=None):
         for name, radio in self.preset_radios.items():
