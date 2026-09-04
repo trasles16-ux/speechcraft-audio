@@ -1928,6 +1928,8 @@ class SpeechCraftFrame(wx.Frame):
         m_help = wx.Menu()
         self.add_item(m_help, "&User Manual\tF1", self.on_help_manual)
         self.add_item(m_help, "&Quick Reference\tF2", self.on_help_quick)
+        m_help.AppendSeparator()
+        self.add_item(m_help, "&Report a Bug...", self.on_report_bug)
         self.menubar.Append(m_help, "&Help")
 
         self.SetMenuBar(self.menubar)
@@ -1948,6 +1950,34 @@ class SpeechCraftFrame(wx.Frame):
         except Exception:
             base_path = os.path.abspath(".")
         return os.path.join(base_path, relative_path)
+
+    def on_report_bug(self, event):
+        """Open the in-app bug-report dialog.
+
+        Imports lazily so the dialog module is not a hard dependency
+        of audio_editor.py and so a missing/crashing dialog does not
+        take the whole app down.
+        """
+        try:
+            from bug_report_dialog import BugReportDialog
+            from crash_submit import read_log_tail
+        except ImportError as e:
+            wx.MessageBox(
+                f"The bug-report dialog could not be loaded:\n\n{e}\n\n"
+                f"You can file the report directly at:\n"
+                f"https://github.com/trasles16-ux/speechcraft-audio/issues/new",
+                "Report a Bug",
+                wx.OK | wx.ICON_WARNING,
+            )
+            return
+
+        log_tail = read_log_tail()
+        dlg = BugReportDialog(
+            self,
+            app_version=__version__ if "__version__" in globals() else "3.0.2",
+            log_tail=log_tail,
+        )
+        dlg.show()
 
     def add_item(self, menu, label, callback):
         item = menu.Append(wx.ID_ANY, label)

@@ -1,0 +1,72 @@
+name: Accessibility Issue
+description: A dialog, control, or workflow is not accessible with a screen reader or other assistive technology.
+labels: ["accessibility", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      content: |
+        Accessibility bugs are high priority for this project. Thank you for taking the time to report one.
+  - type: input
+    id: title
+    attributes:
+      label: Short title
+      placeholder: "Piper TTS dialog voice list announces as 'unknown'"
+    validations:
+      required: true
+  - type: dropdown
+    id: screen_reader
+    attributes:
+      label: Which screen reader?
+      options:
+        - NVDA
+        - JAWS
+        - Narrator
+        - VoiceOver
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: screen_reader_version
+    attributes:
+      label: Screen reader version (if known)
+      placeholder: "NVDA 2024.4"
+    validations:
+      required: false
+  - type: textarea
+    id: where
+    attributes:
+      label: Where in the app does the problem happen?
+      placeholder: "Speech menu → Piper TTS → Voice: combo box"
+    validations:
+      required: true
+  - type: textarea
+    id: what_announced
+    attributes:
+      label: What does the screen reader announce?
+      placeholder: "Just 'unknown', or 'combo box' with no name."
+    validations:
+      required: true
+  - type: textarea
+    id: what_expected
+    attributes:
+      label: What should it announce?
+      placeholder: "'Piper voice, list, 1 of 1' or 'Piper voice combo box' with the voice name visible."
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the Piper TTS dialog
+        2. Tab to the Voice: combobox
+        3. Press Down arrow to read the current selection
+    validations:
+      required: false
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Is there a workaround?
+      placeholder: "I can still synthesise by pressing Synthesize with the first voice, but I cannot tell which voice is selected."
+    validations:
+      required: false

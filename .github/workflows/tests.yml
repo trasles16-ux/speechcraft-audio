@@ -1,0 +1,43 @@
+name: Run Tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  smoke:
+    name: Smoke tests (no wx)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install test dependencies
+        run: |
+          # Smoke job installs ONLY the minimum deps the engine
+          # modules need (pydub, edge-tts, piper-tts). The full
+          # requirements include pywin32 which is Windows-only.
+          # The "Full tests" job on Windows installs everything.
+          pip install pydub edge-tts piper-tts pytest
+      - name: Run smoke tests
+        run: |
+          python -m pytest tests/test_dialog_smoke.py -v
+
+  full:
+    name: Full tests (with wx on Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
+      - name: Run smoke tests
+        run: |
+          python -m pytest tests/test_dialog_smoke.py -v
