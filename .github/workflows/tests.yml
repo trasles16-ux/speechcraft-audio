@@ -17,12 +17,11 @@ jobs:
           python-version: '3.11'
       - name: Install test dependencies
         run: |
-          # Smoke job installs the full requirements so the engine
-          # modules (which import pydub, edge_tts, etc.) can be
-          # imported by the dialog-API test. wxPython is intentionally
-          # skipped on Linux because it does not install cleanly.
-          pip install -r requirements.txt
-          pip install pytest
+          # Smoke job installs ONLY the minimum deps the engine
+          # modules need (pydub, edge-tts, piper-tts). The full
+          # requirements include pywin32 which is Windows-only.
+          # The "Full tests" job on Windows installs everything.
+          pip install pydub edge-tts piper-tts pytest
       - name: Run smoke tests
         run: |
           python -m pytest tests/test_dialog_smoke.py -v
