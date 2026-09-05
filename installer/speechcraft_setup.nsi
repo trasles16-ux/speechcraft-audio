@@ -15,6 +15,9 @@ VIAddVersionKey "LegalCopyright" "Tracy Smith 2026 (MIT)"
 VIAddVersionKey "FileDescription" "Accessible Audio Editor"
 VIAddVersionKey "FileVersion" "1.1.0"
 
+; Installer name (used in window titles and welcome page)
+Name "SpeechCraft Studio"
+
 ; Output location - use absolute path to ensure it writes to the right place
 !define OUTPUT_DIR "C:/Users/trace/Documents/AppProjects/speechcraft-audio/dist"
 OutFile "${OUTPUT_DIR}/SpeechCraft_Studio_Setup.exe"
@@ -27,6 +30,7 @@ OutFile "${OUTPUT_DIR}/SpeechCraft_Studio_Setup.exe"
 
 ; ==================== PAGE SEQUENCE ====================
 !insertmacro MUI_PAGE_WELCOME
+!define MUI_WELCOMEPAGE_TITLE "Welcome to SpeechCraft Studio"
 !insertmacro MUI_PAGE_LICENSE "..\LICENSE.txt"
 Page custom BundlePage_Create BundlePage_Leave
 !insertmacro MUI_PAGE_INSTFILES
