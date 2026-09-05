@@ -1,23 +1,27 @@
 import wx
 import os
 import threading
-import sounddevice as sd
-from pathlib import Path
-from pydub import AudioSegment
-from pydub.utils import which
-import numpy as np
-import webbrowser
-import pyttsx3 # For accessible announcements
-import pyaudio
-import struct
-import audio_tracks  # Moved out of try-except to ensure visibility
-import project_handler # Moved out to ensure visibility
-import config  # For EQ and compressor presets
-import preset_manager  # For custom preset save/load/import/export
-import batch_processor  # For batch processing multiple files
+import webbrowser  # Used for Help menu
+from pydub import AudioSegment  # pydub is small + cheap, used by setup_ffmpeg
+import audio_tracks  # Needed by SpeechCraftFrame (small, fast)
+import project_handler  # Used by SpeechCraftFrame (small, fast)
+import config  # Built-in presets
+import preset_manager  # Custom preset save/load
 from dialogs.effects_dialogs import (AudioClipboard, EffectSettingsDialog, BreathSmoothingPresetDialog, CompressorPresetDialog, EQPresetDialog, RoomToneMatchDialog, BatchProcessDialog)
 from dialogs.recording_dialogs import (RecordingDialog, StudioRecordingDialog)
 from main_frame_tts import TTSMenuMixin
+
+# These are imported lazily inside SpeechCraftFrame.__init__ so the
+# splash can show construction progress instead of an invisible freeze.
+# sounddevice (~3 MB), pyaudio (~6 MB), and batch_processor (which
+# pulls in pedalboard and scipy via audio_effects) are deferred until
+# the relevant UI section runs, so the first-paint splash can show
+# progress while they're loading.
+_LAZY_IMPORTS = {
+    "sounddevice": "sound device input/output (AudioClipboard, live monitoring)",
+    "pyaudio": "PyAudio (recording engine)",
+    "batch_processor": "Batch processor (Effects → Batch Process…)",
+}
 
 # Configure FFmpeg path - simplified startup check
 def setup_ffmpeg():
@@ -86,49 +90,75 @@ word_alignment = safe_import('word_alignment')
 audio_recorder = safe_import('audio_recorder')
 
 class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
-    def __init__(self):
+    def __init__(self, progress=None):
+        """Build the main window.
+
+        Parameters
+        ----------
+        progress : callable | None
+            Optional ``(step_name, status) -> None`` callback that gets
+            called after each major setup chunk. Used by the Splash
+            window to show construction progress. The callback is
+            permitted to be None (e.g. tests, headless boots) — every
+            call site guards against that.
+        """
+        if progress is None:
+            def progress(_step, _status=""):  # noqa: F811
+                return None
+
         print("STARTING INIT")
         super().__init__(parent=None, title='SpeechCraft Studio', size=(1000, 800))
-        
+
         # Check FFmpeg before continuing
+        progress("Preparing workspace", "Checking audio engine")
         self.check_ffmpeg_with_dialog()
-        
+
+        # Lazy-load sounddevice here. On the bundle this module is
+        # ~3 MB; deferring it until the frame is being constructed
+        # lets the splash update before this slow import.
+        progress("Preparing workspace", "Loading audio device module")
+        global sd
+        import sounddevice as sd  # noqa: F811
+
         # Safety / Late Init for UI components
         self.workspace = None
         self.log_area = None
         self.tracks_list = None
-        
+
+        progress("Preparing workspace", "Building the menu bar")
         self.init_ui()
         self.create_menus()
-        
+
         # --- AUDIO ENGINE ---
         self.audio_loaded = False
         self.stream = None # For sounddevice
-        self.current_samples_float = None 
+        self.current_samples_float = None
         self.current_samples_int16 = None
         self.sample_rate = 44100
-        
+
         # Track Manager Integration
         self.track_manager = audio_tracks.TrackManager()
-        self.active_track_index = -1 
-        
+        self.active_track_index = -1
+
         self.playhead_ms = 0
-        
+
         # Data State
         self.current_script = None
         self.current_transcript = ""
         self.word_alignment = None
-        
+
         # Project State
         self.default_project_dir = project_handler.ProjectHandler.get_default_project_dir()
         print(f"DEBUG: Default Project Dir: {self.default_project_dir}")
-        
+
         # Audio Engine State
         self.audio_engine = "sounddevice" # Options: "sounddevice", "pyaudio", "custom_asio"
+        progress("Preparing workspace", "Initialising PyAudio for recording")
+        import pyaudio  # noqa: F811  # PyAudio is heavyweight (~6 MB) but needed for recording
         self.pyaudio_instance = pyaudio.PyAudio()
         self._playing = False
         self.monitor_volume = 1.0  # Director volume control
-        
+
         # Custom ASIO support
         self.asio_manager = None
 
@@ -142,32 +172,35 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
             self.asio_manager = custom_asio.get_asio_manager()
         except ImportError:
             pass
-        
+
         # Safety Init
         self.workspace = None
         self.log_area = None
         self.tracks_list = None
-        
+
         # Audio Engine
-        import audio_recorder
+        progress("Preparing workspace", "Setting up audio recorder")
+        import audio_recorder  # noqa: F811
         self.recorder = audio_recorder.AudioRecorder(progress_callback=self.update_record_time)
         self.is_recording = False
 
         # Undo History
         self.undo_stack = []
         self.redo_stack = []
-        
+
         # Initialize UI (THIS WAS MISSING!)
         self.init_ui()
         self.create_menus()
         self.CreateStatusBar()  # Create status bar AFTER menus
-        
+
+        progress("Preparing workspace", "Almost there, finishing UI…")
+
         # Bind key events after controls are created
         if self.workspace:
             self.workspace.Bind(wx.EVT_KEY_UP, self.on_workspace_key_up)
         if self.log_area:
             self.log_area.Bind(wx.EVT_KEY_DOWN, self.on_key_down)
-            
+
         wx.CallAfter(self.announce_welcome)
 
     def announce(self, text):
@@ -2754,17 +2787,34 @@ def main(splash=None):
 
         splash.update("Loading effects presets", "Built-in presets ready")
         splash.update("Loading recent projects", "Workspace ready")
-        splash.update("Preparing workspace", "Almost there…")
 
-    frame = SpeechCraftFrame()
+    def _progress(step_name: str, status: str = "") -> None:
+        """Called from SpeechCraftFrame.__init__ to update the splash.
+
+        Lifecycle: this callback fires from inside the frame
+        constructor, so it must be safe against a None splash. When
+        splash is None the callback is a no-op so production code that
+        built without a splash doesn't need to special-case it.
+        """
+        if splash is not None:
+            splash.update(step_name, status)
+
+    _progress("Preparing workspace", "Building the main window…")
+
+    # Build the frame under the splash so the user sees progress
+    # instead of an apparent freeze.
+    frame = SpeechCraftFrame(progress=_progress)
 
     if splash is not None:
-        # Close the splash only after the frame is built. This avoids
-        # the visual flash where the splash disappears and the frame
-        # takes a beat to draw.
+        # Frame is built. Close the splash before MainLoop so the user
+        # sees the splash go away at the same instant the main
+        # window appears — no flash of empty screen between.
         splash.close()
 
     frame.Show()
+    # Force a refresh before MainLoop so the window paints at least
+    # one frame even on machines where MainLoop is slow to enter.
+    frame.Update()
     app.MainLoop()
     return 0
 
