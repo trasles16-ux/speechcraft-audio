@@ -49,6 +49,24 @@ def launch_speechcraft() -> int:
 
     print("Starting SpeechCraft...")
 
+    # Splash is shown BEFORE the rest of the launch sequence so the
+    # user immediately sees an accessible loading surface. Each major
+    # startup phase updates a checkmark on the splash via Splash.update().
+    # If anything stalls, the user can read where we got stuck; if
+    # everything succeeds, the splash dismisses when the main frame
+    # is ready. The splash is wx-dependent, so it's only attempted when
+    # wx is importable — bare `python run_speechcraft.py` from a
+    # broken venv still falls through to the import-error path.
+    splash = None
+    try:
+        import wx  # noqa: F401  # smoke test: is wx usable at all?
+        from splash import Splash
+        splash = Splash()
+    except Exception:
+        # No splash possible (import error, headless, etc.). The plain
+        # print() below still gives sighted devs something to look at.
+        pass
+
     # Install the excepthook so crashes raised AFTER wx is initialised
     # are still captured. wx apps swallow uncaught exceptions inside
     # the main loop, so the launcher-level try/except only catches
@@ -93,12 +111,26 @@ def launch_speechcraft() -> int:
         pass
 
     try:
+        # Each milestone below maps 1:1 to a step the Splash announces.
+        # If splash failed to create, the .update() calls are no-ops via
+        # the getattr default.
+        if splash is not None:
+            splash.update("Loading user interface", "Importing wxPython")
         from audio_editor import main
         print("[OK] SpeechCraft launched successfully")
-        main()
+        # …and we hand control straight to main(). The main frame will
+        # appear behind the splash on the same screen, then the splash
+        # auto-closes via the wx.App-level logic in audio_editor.main().
+        return main(splash=splash)
     except Exception as e:
         _write_error_log(log_file, type(e), e, e.__traceback__)
         print(f"\n[ERROR] Error logged to: {log_file.absolute()}")
+
+        if splash is not None:
+            try:
+                splash.update("Loading user interface", f"Error: {e}")
+            except Exception:
+                pass
 
         # Announce error via speech if a TTS engine is available
         try:
