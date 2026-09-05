@@ -33,6 +33,12 @@ Name "SpeechCraft Studio"
 !define OUTPUT_DIR "C:/Users/trace/Documents/AppProjects/speechcraft-audio/dist"
 OutFile "${OUTPUT_DIR}/SpeechCraft_Studio_Setup.exe"
 
+; ==================== VARS (must be declared BEFORE page macros) ====================
+Var BundleChoice
+Var Dialog
+Var CoreRadio
+Var FullRadio
+
 ; ==================== INCLUDES ====================
 !include "MUI2.nsh"
 !include "nsDialogs.nsh"
@@ -52,25 +58,37 @@ Page custom BundlePage_Create BundlePage_Leave
 
 !define MUI_FINISHPAGE_TITLE "Installation complete"
 !define MUI_FINISHPAGE_TEXT "SpeechCraft Studio is now installed.$\r$\n$\r$\nChoose an edition below and click Finish to launch it, or click Finish without selecting anything to close the installer."
+; "Launch" button on finish page — points at the EXE matching the
+; edition the user picked on the bundle-choice page. Without this
+; override, NSIS tries $INSTDIR\<Name>.exe which is
+; "SpeechCraft Studio.exe" (with a space) — doesn't exist, so the
+; launcher pops "this app can't run on your PC".
 !define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_TEXT "Launch SpeechCraft Studio"
 !define MUI_FINISHPAGE_RUN_NOTCHECKED
-!define MUI_FINISHPAGE_SHOWREADME
-!define MUI_FINISHPAGE_SHOWREADME_TEXT "View README"
-!define MUI_FINISHPAGE_SHOWREADME_NOTCHECKED
+!define MUI_FINISHPAGE_RUN_FUNCTION "LaunchSpeechCraft"
+
 !insertmacro MUI_PAGE_FINISH
+
+; ==================== LAUNCH AFTER INSTALL ====================
+; Points at the EXE matching the edition the user picked on the
+; bundle-choice page. Without this override, NSIS tries
+; $INSTDIR\<Name>.exe which is "SpeechCraft Studio.exe" (with a
+; space) — doesn't exist, so the launcher pops "this app can't run
+; on your PC".
+Function LaunchSpeechCraft
+    ${If} $BundleChoice == "Full"
+        Exec '"$INSTDIR\SpeechCraft_Studio_Full.exe"'
+    ${Else}
+        Exec '"$INSTDIR\SpeechCraft_Studio_Core.exe"'
+    ${EndIf}
+FunctionEnd
 
 ; ==================== UNINSTALLER ====================
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 
 !insertmacro MUI_LANGUAGE "English"
-
-; ==================== VARS ====================
-Var BundleChoice
-Var Dialog
-Var CoreRadio
-Var FullRadio
 
 ; ==================== SECTION (where File actually works) ====================
 Section "SpeechCraft Studio" SecMain
@@ -129,28 +147,31 @@ Function BundlePage_Create
     ${EndIf}
     
     ; Title
-    nsDialogs::CreateControl STATIC $0 0x80000000 0 0 100% 20u "Choose your edition:"
+    ${NSD_CreateLabel} 0 0 100% 20u "Choose your edition:"
     Pop $0
     
-    ; Core radio
-    nsDialogs::CreateControl BUTTON $CoreRadio 0x80000004 20 50 100% 12u "Core — recommended (172 MB)"
+    ; Core radio. WS_GROUP (added by NSD_CreateFirstRadioButton) marks
+    ; this as the start of a new radio-button group so Tab and arrow
+    ; keys navigate between Core and Full only.
+    ${NSD_CreateFirstRadioButton} 20 35 100% 12u "Core — recommended (172 MB)"
     Pop $CoreRadio
     SendMessage $CoreRadio ${BM_SETCHECK} ${BST_CHECKED} 0
     
     ; Core description
-    nsDialogs::CreateControl STATIC $0 0x80000000 35 65 100% 40u "Recording, transcription via cloud account, TTS, basic effects, breath smoothing, room tone match. Great starting point for everyday audio work."
+    ${NSD_CreateLabel} 35 50 100% 30u "Recording, transcription via cloud account, TTS, basic effects, breath smoothing, room tone match. Great starting point for everyday audio work."
     Pop $0
     
-    ; Full radio
-    nsDialogs::CreateControl BUTTON $FullRadio 0x80000004 20 115 100% 12u "Full — all features (435 MB)"
+    ; Full radio — NSD_CreateRadioButton (no WS_GROUP), so it's part
+    ; of the same group as Core. Tab/arrow keys will toggle between them.
+    ${NSD_CreateRadioButton} 20 90 100% 12u "Full — all features (435 MB)"
     Pop $FullRadio
     
     ; Full description
-    nsDialogs::CreateControl STATIC $0 0x80000000 35 130 100% 40u "Everything in Core, plus local Whisper transcription and advanced effects (pedalboard)."
+    ${NSD_CreateLabel} 35 105 100% 30u "Everything in Core, plus local Whisper transcription and advanced effects (pedalboard)."
     Pop $0
     
     ; Footer note
-    nsDialogs::CreateControl STATIC $0 0x80000000 20 180 100% 20u "Tip: you can switch editions later from the Help menu inside the app."
+    ${NSD_CreateLabel} 20 150 100% 20u "Tip: you can switch editions later from the Help menu inside the app."
     Pop $0
     
     nsDialogs::Show
