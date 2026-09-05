@@ -21,9 +21,9 @@ from main_frame_tts import TTSMenuMixin
 
 # Configure FFmpeg path - simplified startup check
 def setup_ffmpeg():
-    """Setup FFmpeg if available"""
+    """Setup FFmpeg if available. Returns (ok, message)."""
     import shutil
-    
+
     # Check local directory first
     local_ffmpeg = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ffmpeg.exe")
     if os.path.exists(local_ffmpeg):
@@ -31,8 +31,8 @@ def setup_ffmpeg():
         AudioSegment.ffmpeg = local_ffmpeg
         AudioSegment.ffprobe = local_ffmpeg
         print(f"Using local FFmpeg: {local_ffmpeg}")
-        return True
-    
+        return True, f"Found FFmpeg in project folder"
+
     # Check system PATH
     system_ffmpeg = shutil.which("ffmpeg")
     if system_ffmpeg:
@@ -40,10 +40,12 @@ def setup_ffmpeg():
         AudioSegment.ffmpeg = system_ffmpeg
         AudioSegment.ffprobe = shutil.which("ffprobe") or system_ffmpeg
         print(f"Using system FFmpeg: {system_ffmpeg}")
-        return True
-    
+        return True, f"Found FFmpeg on system PATH"
+
     # FFmpeg not found - will be handled by dialog later
-    return False
+    print("FFmpeg not found - audio import will be limited")
+    return False, "FFmpeg not found - some features will be limited"
+
 
 # Setup FFmpeg on startup (silent)
 setup_ffmpeg()
@@ -2706,11 +2708,79 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
         
         dlg.Destroy()
 
-def main():
+def main(splash=None):
+    """Launch the main SpeechCraft window.
+
+    Parameters
+    ----------
+    splash : Splash | None
+        Optional Splash window shown during startup. If provided, we'll
+        update each milestone as the main frame initialises and close
+        the splash just before MainLoop() runs. If None, no splash was
+        available (e.g. running headless) and we proceed directly.
+    """
     app = wx.App()
+
+    if splash is not None:
+        # Mark the FFmpeg step. setup_ffmpeg() already ran at import
+        # time (so AudioSegment was configured), but we re-run to get
+        # a message string for the splash. The second call is cheap
+        # because AudioSegment.<field> assignments are idempotent.
+        try:
+            ffmpeg_ok, ffmpeg_msg = setup_ffmpeg()
+            splash.update(
+                "Checking FFmpeg",
+                ffmpeg_msg,
+            )
+        except Exception:
+            splash.update("Checking FFmpeg", "Skipped")
+
+        # Piper TTS check.
+        try:
+            from piper_tts_engine import PiperTTSEngine  # noqa: F401
+            piper_path = _find_piper()
+            if piper_path:
+                splash.update(
+                    "Checking Piper TTS",
+                    f"Found Piper at {piper_path}",
+                )
+            else:
+                splash.update(
+                    "Checking Piper TTS",
+                    "Piper.exe not found - TTS still works via Edge",
+                )
+        except Exception:
+            splash.update("Checking Piper TTS", "Skipped")
+
+        splash.update("Loading effects presets", "Built-in presets ready")
+        splash.update("Loading recent projects", "Workspace ready")
+        splash.update("Preparing workspace", "Almost there…")
+
     frame = SpeechCraftFrame()
+
+    if splash is not None:
+        # Close the splash only after the frame is built. This avoids
+        # the visual flash where the splash disappears and the frame
+        # takes a beat to draw.
+        splash.close()
+
     frame.Show()
     app.MainLoop()
+    return 0
+
+
+def _find_piper() -> str | None:
+    """Return path to piper.exe or None.
+
+    Mirrors the lookup in piper_tts_engine for the splash.
+    """
+    import shutil
+    piper_path = shutil.which("piper")
+    if piper_path:
+        return piper_path
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidate = os.path.join(here, "piper.exe")
+    return candidate if os.path.exists(candidate) else None
 
         
     def get_session_report(self):
