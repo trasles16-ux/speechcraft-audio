@@ -49,6 +49,24 @@ def launch_speechcraft() -> int:
 
     print("Starting SpeechCraft...")
 
+    # Onboarding: pick bundle (Core / Full) on first run, persist for
+    # later launches. Runs before the splash so the user's choice is
+    # available to audio_editor for menu hide/show rules.
+    try:
+        from onboarding_dialog import get_preferred_bundle
+        choice = get_preferred_bundle()
+        if choice is None:
+            from onboarding_dialog import run_onboarding
+            choice = run_onboarding()
+        if choice:
+            print(f"[OK] User picked bundle: {choice}")
+    except Exception:
+        # If onboarding fails for any reason (no display, wx missing,
+        # etc.) we silently proceed with whatever the previous run left
+        # or fall back to Core. The bug-report dialog handles real
+        # crashes later.
+        pass
+
     # Splash is shown BEFORE the rest of the launch sequence so the
     # user immediately sees an accessible loading surface. Each major
     # startup phase updates a checkmark on the splash via Splash.update().
@@ -180,4 +198,3 @@ if __name__ == "__main__":
     # Ensure wx is imported before main() — needed for the excepthook
     # fallback path to find it. audio_editor.main() imports wx itself.
     sys.exit(launch_speechcraft())
-
