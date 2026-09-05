@@ -1,8 +1,20 @@
 name: Build SpeechCraft Release EXE (with data files)
 
+# Manual-only trigger. Originally this ran on `release: published` to
+# upload a CI-built EXE back to the same release, but:
+#   1. It fights with the local build workflow — releases are uploaded
+#      from Tracy's Windows machine (Full + Core + NSIS Setup), and a
+#      CI rebuild would only produce the Full EXE.
+#   2. The `release: published` trigger was intermittently returning a
+#      404 (stale release ID in the github.event.release.id context),
+#      producing red ❌ on otherwise-correct releases.
+#   3. The "smoke-test-only" data source still works via this workflow
+#      for an ephemeral build verification, but doesn't auto-attach
+#      anything to a release.
+#
+# If you need a one-off CI build, hit "Run workflow" from the Actions
+# tab and pick a data source.
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       data_source:
@@ -29,7 +41,7 @@ jobs:
 
       # Download the data files as a release asset, but only if a release is published
       - name: Download data bundle from release assets (if available)
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || inputs.data_source == 'release-assets'
         shell: pwsh
         run: |
           $assets = $env:GITHUB_API_URL + "/repos/${{ github.repository }}/releases/${{ github.event.release.id }}/assets"
@@ -70,7 +82,7 @@ jobs:
             exit 1
           }
 
-      # If triggered by a release, attach the EXE to it
+      # If triggered by a release (rare — see top-of-file comment), attach the EXE
       - name: Attach EXE to release (if release trigger)
         if: github.event_name == 'release'
         shell: pwsh
