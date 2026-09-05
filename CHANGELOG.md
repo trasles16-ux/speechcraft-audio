@@ -4,6 +4,10 @@ All notable changes to SpeechCraft Audio are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed (1.0.1)
+- **`ModuleNotFoundError: No module named 'wx'` on first launch**: The v1.0.0 release was built from a partially-installed venv, so PyInstaller exits 0 but the bundled EXE was missing wxPython, pyttsx3, and a handful of other heavy deps. The user-visible effect was an immediate crash on every machine. This release ships the full bundle (435 MB) built from a clean venv.
+- Added `tests/test_build_artifact.py` — a release-gate that inspects the PyInstaller CArchive TOC + PYZ archive and fails if wx, numpy, pydub, sounddevice, or pedalboard are missing. Also enforces a 50 MB minimum size. Will catch this class of bug on every future build.
+
 ### Added
 - **In-app bug reporting**: Help → Report a Bug now opens a dialog that collects a description, expected behaviour, and reproduction steps; pre-fills the GitHub issues URL with those answers plus environment info; and copies the URL to the clipboard as a fallback. See [README § How to report a bug](README.md#how-to-report-a-bug).
 - **Crash hook**: an uncaught exception now writes a redacted traceback to `speechcraft_error.log` and offers to open the bug-report dialog with the log tail pre-attached.

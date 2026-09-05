@@ -9,6 +9,7 @@ soundfile
 SpeechRecognition>=3.10.0
 pyttsx3>=2.90  # For accessible on-screen announcements (used by SpeechCraftFrame)
 pyaudio>=0.2.13  # Audio I/O for the recording dialogs
+pyinstxtractor-ng>=2026.7  # Used by tests/test_build_artifact.py to verify PyInstaller bundles
 
 # Transcription
 faster-whisper>=1.0.0
