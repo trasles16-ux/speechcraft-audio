@@ -390,6 +390,8 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
         self.add_item(m_help, "&Quick Reference\tF2", self.on_help_quick)
         m_help.AppendSeparator()
         self.add_item(m_help, "&Report a Bug...", self.on_report_bug)
+        m_help.AppendSeparator()
+        self.add_item(m_help, "&Switch Edition... (Core / Full)", self.on_switch_edition)
         self.menubar.Append(m_help, "&Help")
 
         self.SetMenuBar(self.menubar)
@@ -438,6 +440,39 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
             log_tail=log_tail,
         )
         dlg.show()
+
+    def on_switch_edition(self, event):
+        """Allow user to switch between Core and Full edition.
+
+        Shows the onboarding dialog so the user can pick a different
+        edition. Writes the choice to prefs and prompts the user to
+        restart the app.
+        """
+        try:
+            from onboarding_dialog import OnboardingDialog, _load_prefs, _save_prefs
+        except ImportError as e:
+            wx.MessageBox(
+                f"Could not load the edition-switcher:\n\n{e}",
+                "Switch Edition",
+                wx.OK | wx.ICON_ERROR,
+            )
+            return
+
+        dlg = OnboardingDialog(self)
+        try:
+            if dlg.ShowModal() == wx.ID_OK:
+                choice = dlg.get_choice()
+                prefs = _load_prefs()
+                prefs["preferred_bundle"] = choice
+                _save_prefs(prefs)
+                wx.MessageBox(
+                    f"You've selected the {choice} edition.\n"
+                    "Please restart SpeechCraft Studio to apply the change.",
+                    "Switch Edition",
+                    wx.OK | wx.ICON_INFORMATION,
+                )
+        finally:
+            dlg.Destroy()
 
     def add_item(self, menu, label, callback):
         item = menu.Append(wx.ID_ANY, label)
