@@ -31,8 +31,15 @@ import sounddevice as sd
 import wx
 from pydub import AudioSegment
 
-import audio_effects
-import batch_processor
+# Heavy / Full-bundle-only modules are imported lazily inside dialog
+# methods that need them, so the Core build (which excludes pedalboard)
+# can still import this module without crashing on startup.
+#   - audio_effects: imports pedalboard; absent from Core
+#   - batch_processor: also imports audio_effects transitively
+# The Core spec excludes both, so a top-level import here would crash
+# Core at startup with an "unhandled exception ... pedalboard" error.
+
+# Lightweight modules that exist in both Core and Full:
 import config
 import preset_manager
 
@@ -685,6 +692,8 @@ class EQPresetDialog(wx.Dialog):
         self.Centre()
 
     def _build_ui(self):
+        # Lazy import: audio_effects depends on pedalboard (Full-only).
+        import audio_effects
         outer = wx.BoxSizer(wx.VERTICAL)
         main = wx.BoxSizer(wx.HORIZONTAL)
 
@@ -809,6 +818,8 @@ class EQPresetDialog(wx.Dialog):
             self.band_labels[label].SetLabel(f"{sign}{val} dB")
 
     def _update_display(self):
+        # Lazy import: audio_effects depends on pedalboard (Full-only).
+        import audio_effects
         # Load bands from built-in or custom preset
         if self.selected_preset in config.EQ_PRESETS:
             bands = config.EQ_PRESETS[self.selected_preset]["bands"]
@@ -1287,6 +1298,8 @@ class BatchProcessDialog(wx.Dialog):
     # Page 2 — Effect selection and configuration
     # ------------------------------------------------------------------
     def _page_effect(self):
+        # Lazy import: batch_processor pulls in audio_effects (Full-only).
+        import batch_processor
         panel = wx.Panel(self.notebook)
         sizer = wx.BoxSizer(wx.VERTICAL)
 
@@ -1322,6 +1335,8 @@ class BatchProcessDialog(wx.Dialog):
         self._rebuild_preset_ui()
 
     def _on_effect_changed(self, event=None):
+        # Lazy import: batch_processor pulls in audio_effects (Full-only).
+        import batch_processor
         idx = self.effect_choice.GetSelection()
         keys = list(batch_processor.EFFECT_DEFINITIONS.keys())
         self.effect_type = keys[idx]
@@ -1329,6 +1344,8 @@ class BatchProcessDialog(wx.Dialog):
 
     def _rebuild_preset_ui(self):
         """Rebuild preset radio buttons and advanced param sliders."""
+        # Lazy import: batch_processor pulls in audio_effects (Full-only).
+        import batch_processor
         # Clear preset section
         for child in self.preset_sizer.GetChildren():
             w = child.GetWindow()
@@ -1385,7 +1402,9 @@ class BatchProcessDialog(wx.Dialog):
                 break
 
     def _apply_preset_to_params(self):
-        """Update param sliders to match the selected preset."""
+        """Apply the currently-selected preset's params to the slider controls."""
+        # Lazy import: batch_processor pulls in audio_effects (Full-only).
+        import batch_processor
         info = batch_processor.EFFECT_DEFINITIONS.get(self.effect_type, {})
         presets = info.get("presets", {})
         if self.selected_preset not in presets:
@@ -1531,6 +1550,8 @@ class BatchProcessDialog(wx.Dialog):
     # Batch processing
     # ------------------------------------------------------------------
     def _run_batch(self):
+        # Lazy import: batch_processor pulls in audio_effects (Full-only).
+        import batch_processor
         self.next_btn.Enable(False)
         self.prev_btn.Enable(False)
         self.cancel_btn.Enable(False)
