@@ -15,14 +15,9 @@ VIAddVersionKey "LegalCopyright" "Tracy Smith 2026 (MIT)"
 VIAddVersionKey "FileDescription" "Accessible Audio Editor"
 VIAddVersionKey "FileVersion" "1.1.0"
 
-; Output location (can be overridden with /DSTAGING=...)
-!ifdef STAGING
-  !define OUTPUT_DIR "${STAGING}"
-!else
-  !define OUTPUT_DIR "..\dist"
-!endif
-
-OutFile "${OUTPUT_DIR}\SpeechCraft_Studio_Setup.exe"
+; Output location - use absolute path to ensure it writes to the right place
+!define OUTPUT_DIR "C:/Users/trace/Documents/AppProjects/speechcraft-audio/dist"
+OutFile "${OUTPUT_DIR}/SpeechCraft_Studio_Setup.exe"
 
 ; ==================== LANGUAGES ====================
 !include "MUI2.nsh"
@@ -106,11 +101,11 @@ Function .onInstSuccess
     
     ; Install Core always
     SetOutPath "$INSTDIR"
-    File "/oname=SpeechCraft_Studio_Core.exe" "${OUTPUT_DIR}\SpeechCraft_Studio_Core.exe"
+    File "/oname=SpeechCraft_Studio_Core.exe" "..\dist\SpeechCraft_Studio_Core.exe"
     
     ; Install Full if selected
     ${If} $BundleChoice == "Full"
-        File "/oname=SpeechCraft_Studio_Full.exe" "${OUTPUT_DIR}\SpeechCraft_Studio.exe"
+        File "/oname=SpeechCraft_Studio_Full.exe" "..\dist\SpeechCraft_Studio.exe"
     ${EndIf}
     
     ; Create shortcuts
