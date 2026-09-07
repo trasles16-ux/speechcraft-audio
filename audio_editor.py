@@ -23,21 +23,74 @@ _LAZY_IMPORTS = {
     "batch_processor": "Batch processor (Effects → Batch Process…)",
 }
 
+
+def _ffmpeg_persistent_dir():
+    """Return a writable directory that survives app restarts.
+
+    Three cases:
+    - Frozen EXE in Program Files: %LOCALAPPDATA%/SpeechCraft/ (the
+      EXE directory is admin-only and PyInstaller's MEIPASS is wiped
+      on every launch — both bad choices for storing ffmpeg.exe).
+    - Source-tree run: the project directory (so devs see ffmpeg.exe
+      next to audio_editor.py, where the spec will pick it up).
+    - Tests / oddballs: a temp dir (last-resort; user loses ffmpeg
+      on next launch, but we never silently fall through to MEIPASS
+      which is invisible).
+    """
+    import sys
+
+    if getattr(sys, "frozen", False):
+        # Packaged EXE — write to LOCALAPPDATA so we have user-write
+        # access and the file survives across launches.
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        target = os.path.join(base, "SpeechCraft")
+    else:
+        # Dev run — write next to audio_editor.py so the spec picks
+        # it up on the next build.
+        target = os.path.dirname(os.path.abspath(__file__))
+    try:
+        os.makedirs(target, exist_ok=True)
+    except OSError:
+        # Last resort: temp dir. Won't survive a restart but at least
+        # the session works.
+        import tempfile
+        target = tempfile.mkdtemp(prefix="speechcraft-")
+    return target
+
+
+def _ffmpeg_exe_path():
+    """Where ffmpeg.exe should live (and where we look for it)."""
+    return os.path.join(_ffmpeg_persistent_dir(), "ffmpeg.exe")
+
 # Configure FFmpeg path - simplified startup check
 def setup_ffmpeg():
     """Setup FFmpeg if available. Returns (ok, message)."""
     import shutil
 
-    # Check local directory first
-    local_ffmpeg = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ffmpeg.exe")
+    # Check the persistent location first (LOCALAPPDATA in packaged
+    # EXE, project dir in dev). This is where check_ffmpeg_with_dialog
+    # writes the downloaded binary to, so it survives across launches.
+    local_ffmpeg = _ffmpeg_exe_path()
     if os.path.exists(local_ffmpeg):
         AudioSegment.converter = local_ffmpeg
         AudioSegment.ffmpeg = local_ffmpeg
         AudioSegment.ffprobe = local_ffmpeg
-        print(f"Using local FFmpeg: {local_ffmpeg}")
+        print(f"Using FFmpeg from persistent location: {local_ffmpeg}")
+        return True, f"Found FFmpeg at {local_ffmpeg}"
+
+    # Then check the legacy "next to the running script" path. In a
+    # packaged EXE this resolves to PyInstaller's MEIPASS, which is
+    # read-only and wiped on every launch; it works for dev runs and
+    # for any user who dropped ffmpeg.exe next to audio_editor.py.
+    legacy_ffmpeg = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ffmpeg.exe")
+    if os.path.exists(legacy_ffmpeg):
+        AudioSegment.converter = legacy_ffmpeg
+        AudioSegment.ffmpeg = legacy_ffmpeg
+        AudioSegment.ffprobe = legacy_ffmpeg
+        print(f"Using local FFmpeg: {legacy_ffmpeg}")
         return True, f"Found FFmpeg in project folder"
 
-    # Check system PATH
+    # Finally check system PATH
     system_ffmpeg = shutil.which("ffmpeg")
     if system_ffmpeg:
         AudioSegment.converter = system_ffmpeg
@@ -778,12 +831,19 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
     def check_ffmpeg_with_dialog(self):
         """Check FFmpeg with user dialog if download needed"""
         import shutil
-        
-        # Quick check if already available
-        local_ffmpeg = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ffmpeg.exe")
-        if os.path.exists(local_ffmpeg) or shutil.which("ffmpeg"):
+
+        # setup_ffmpeg() already wired AudioSegment.converter if the
+        # binary is present. We just need to decide whether to prompt
+        # the user to download.
+        if shutil.which("ffmpeg") or os.path.exists(_ffmpeg_exe_path()):
             return  # Already available
-            
+
+        # Same legacy path as setup_ffmpeg checks (next to audio_editor.py
+        # in dev, MEIPASS in packaged EXE).
+        legacy = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ffmpeg.exe")
+        if os.path.exists(legacy):
+            return
+
         # Ask user if they want to download FFmpeg
         dlg = wx.MessageDialog(
             self,
@@ -823,35 +883,57 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
         dlg.Destroy()
         
     def download_ffmpeg(self):
-        """Download FFmpeg (called from thread)"""
+        """Download FFmpeg (called from thread).
+
+        Writes to the persistent FFmpeg location (LOCALAPPDATA in a
+        packaged EXE, project dir in dev) instead of next to this
+        script's __file__ — which in a PyInstaller EXE points to a
+        read-only temp dir that's wiped on every launch. That was
+        the silent-failure mode reported in issue #12.
+        """
         try:
             import urllib.request
             import zipfile
             import tempfile
             import shutil
-            
+
             ffmpeg_url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
-            
+
+            # Show some progress in the ProgressDialog while we work
             with tempfile.TemporaryDirectory() as temp_dir:
                 zip_path = os.path.join(temp_dir, "ffmpeg.zip")
                 urllib.request.urlretrieve(ffmpeg_url, zip_path)
-                
+
                 with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                     zip_ref.extractall(temp_dir)
-                
+
                 # Find ffmpeg.exe in extracted files
+                src_ffmpeg = None
                 for root, dirs, files in os.walk(temp_dir):
                     if "ffmpeg.exe" in files:
                         src_ffmpeg = os.path.join(root, "ffmpeg.exe")
-                        dst_ffmpeg = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ffmpeg.exe")
-                        shutil.copy2(src_ffmpeg, dst_ffmpeg)
-                        
-                        # Configure pydub
-                        AudioSegment.converter = dst_ffmpeg
-                        AudioSegment.ffmpeg = dst_ffmpeg
-                        AudioSegment.ffprobe = dst_ffmpeg
-                        return True
-            return False
+                        break
+
+                if not src_ffmpeg:
+                    print(f"FFmpeg download failed: no ffmpeg.exe in extracted zip")
+                    return False
+
+                # Copy to the persistent location so it survives
+                # across launches.
+                dst_ffmpeg = _ffmpeg_exe_path()
+                shutil.copy2(src_ffmpeg, dst_ffmpeg)
+
+                # Verify the copy landed where we expected
+                if not os.path.exists(dst_ffmpeg):
+                    print(f"FFmpeg download failed: copy to {dst_ffmpeg} failed")
+                    return False
+
+                # Configure pydub
+                AudioSegment.converter = dst_ffmpeg
+                AudioSegment.ffmpeg = dst_ffmpeg
+                AudioSegment.ffprobe = dst_ffmpeg
+                print(f"FFmpeg installed at {dst_ffmpeg}")
+                return True
         except Exception as e:
             print(f"FFmpeg download failed: {e}")
             return False
@@ -859,18 +941,29 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
     def on_ffmpeg_download_complete(self, progress_dlg, success):
         """Handle FFmpeg download completion"""
         progress_dlg.Destroy()
-        
-        if success:
+
+        # Verify the file actually exists at the persistent location.
+        # Worker returns True based on shutil.copy2 not raising, but
+        # we want a belt-and-braces check before showing the success
+        # message.
+        ffmpeg_path = _ffmpeg_exe_path()
+        actually_installed = success and os.path.exists(ffmpeg_path)
+
+        if actually_installed:
             wx.MessageBox(
-                "FFmpeg downloaded successfully!\n"
-                "MP3 files are now supported.",
+                f"FFmpeg downloaded successfully!\n\n"
+                f"Installed to: {ffmpeg_path}\n\n"
+                f"MP3 files are now supported.",
                 "Download Complete",
                 wx.ICON_INFORMATION
             )
         else:
             wx.MessageBox(
-                "FFmpeg download failed.\n"
-                "MP3 files will not be supported, but WAV files will work.",
+                "FFmpeg download failed.\n\n"
+                "MP3 files will not be supported, but WAV files will work.\n\n"
+                "If this keeps happening, you can download FFmpeg manually from\n"
+                "https://www.gyan.dev/ffmpeg/builds/ and place ffmpeg.exe in\n"
+                f"{ffmpeg_path}",
                 "Download Failed",
                 wx.ICON_WARNING
             )
