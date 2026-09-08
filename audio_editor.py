@@ -142,6 +142,16 @@ script_handler = safe_import('script_handler')
 word_alignment = safe_import('word_alignment')
 audio_recorder = safe_import('audio_recorder')
 
+# sounddevice and pyaudio are also bound via safe_import so that
+# on_audio_setup() and _play_test_tone() can reference `sd` and `pyaudio`
+# unconditionally. The lazy re-import inside SpeechCraftFrame.__init__
+# then promotes the module to the real one if it loaded successfully
+# (it usually does — these are first-party deps in requirements.txt).
+# This fixes a NameError surfaced as "Error enumerating devices" when
+# the device dialog is opened before __init__ finishes its lazy import.
+sd = safe_import('sounddevice')
+pyaudio = safe_import('pyaudio')
+
 class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
     def __init__(self, progress=None):
         """Build the main window.
