@@ -510,6 +510,21 @@ def test_module_level_pyaudio_is_defined() -> None:
     assert audio_editor.pyaudio is not None
 
 
+@needs_wx
+def test_module_level_np_is_defined() -> None:
+    """audio_editor.np is defined at module load (issue #15).
+
+    _play_test_tone(), the level-monitor audio callback, and the ASIO
+    playback callback all reference `np` without a function-scope
+    `import numpy as np`. Before the fix they raised NameError on first
+    invocation; e.g. clicking Test Output showed
+    'Output test failed: name np is not defined'.
+    """
+    import audio_editor
+    assert hasattr(audio_editor, "np"), "audio_editor.np should be module-level"
+    assert audio_editor.np is not None
+
+
 # ---------------------------------------------------------------------------
 # AST-level regression guard: no function-scope `import sounddevice as sd`
 # ---------------------------------------------------------------------------

@@ -152,6 +152,16 @@ audio_recorder = safe_import('audio_recorder')
 sd = safe_import('sounddevice')
 pyaudio = safe_import('pyaudio')
 
+# numpy is bound at module level for the same reason — _play_test_tone(),
+# the level-monitor audio callback, and the ASIO playback callback all
+# use `np` unconditionally but only some call sites had a local
+# `import numpy as np`. The function-scope imports remain (they're cheap
+# and let future refactors move functions around safely), but having a
+# module-level `np` means any new code path that touches audio data
+# can rely on it. If numpy is genuinely missing, np becomes a
+# DummyModule whose attribute accesses pop a friendly install dialog.
+np = safe_import('numpy')
+
 class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
     def __init__(self, progress=None):
         """Build the main window.
@@ -2519,20 +2529,43 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
             
         def test_input(e):
             sel = input_cb.GetStringSelection()
-            if not sel or "error" in sel.lower(): 
+            if not sel or "error" in sel.lower():
                 wx.MessageBox("Please select a valid input device.", "Error", wx.ICON_ERROR)
                 return
-                
+
             try:
                 input_id = int(sel.split(":")[0])
-                
-                self.SetStatusText("Recording 2-second test...")
+
+                self.SetStatusText("Recording 2-second test from input device...")
                 test_data = sd.rec(int(2 * 44100), samplerate=44100, channels=1, device=input_id)
                 sd.wait()
-                
-                # Play back the recording
-                sd.play(test_data, 44100)
-                self.SetStatusText("Playing back microphone test...")
+
+                # Confirm the recording isn't silence — a dead mic would
+                # otherwise play back 2 seconds of silence and the user
+                # would think the output path is broken.
+                peak = float(np.max(np.abs(test_data))) if len(test_data) else 0.0
+                if peak < 1e-4:
+                    self.SetStatusText(
+                        "Input test recorded near-silence (peak=%.4f). "
+                        "Check that the microphone is connected and unmuted." % peak
+                    )
+                else:
+                    self.SetStatusText(
+                        "Input test recorded (peak=%.4f). Playing back on output device..."
+                        % peak
+                    )
+
+                # Play back on the SELECTED output device, not the system
+                # default — otherwise the user hears nothing if their default
+                # output is wrong. output_cb is the playback combobox.
+                output_sel = output_cb.GetStringSelection()
+                output_id = None
+                if output_sel and "error" not in output_sel.lower():
+                    try:
+                        output_id = int(output_sel.split(":")[0])
+                    except ValueError:
+                        output_id = None
+                sd.play(test_data, 44100, device=output_id)
             except Exception as ex:
                 wx.MessageBox(f"Microphone test failed: {ex}", "Error", wx.ICON_ERROR)
                 
