@@ -4,7 +4,15 @@ All notable changes to SpeechCraft Audio are documented here. The format follows
 
 ## [Unreleased]
 
-### Fixed (1.0.1)
+### Fixed (1.1.3)
+- **`load_audio` silently did nothing on non-WAV files** (issue #13, reported by PaulDrake777): `AudioSegment.from_file()` raises `CouldntEncodeError`/`CouldntDecodeError` when ffmpeg is missing — subclasses of `Exception`, not `FileNotFoundError`, so the existing `except` clause never fired. The exception bubbled up uncaught and wxPython swallowed it silently. `load_audio` now catches any exception, distinguishes ffmpeg-missing from generic decode errors, falls back to `wave.open` for WAV files, and always surfaces a user-facing dialog. (#13)
+- **"Error enumerating devices" + "Output test failed: name 'np' is not defined"** in Advanced Audio Setup (issue #14, #15): `sd`, `pyaudio`, and `np` are now bound at module load via `safe_import()` so the device dialog, level monitor, and test-tone code can always reference them. A nested `import sounddevice as sd` inside `populate_devices()` (and a `global sd; import sounddevice as sd` inside `__init__`) was causing `UnboundLocalError` instead of `NameError` — both removed. AST-scan regression test added: it fails the build if anyone reintroduces function-scope `import sounddevice as sd`. (#14)
+- **Test Input recorded silence on the wrong output device**: `sd.play(test_data, 44100)` used the system default output, ignoring the user's selection in the Output combobox. Now plays on the selected output, and surfaces the recorded peak in the status bar so a dead mic is distinguishable from a broken output path. (#15)
+- Added 5 regression tests covering the broadened `except` clause, the module-level `sd`/`pyaudio`/`np` bindings, and the AST guard against function-scope sounddevice imports.
+
+## [1.1.2] — 2026-09-07
+
+### Fixed
 - **`ModuleNotFoundError: No module named 'wx'` on first launch**: The v1.0.0 release was built from a partially-installed venv, so PyInstaller exits 0 but the bundled EXE was missing wxPython, pyttsx3, and a handful of other heavy deps. The user-visible effect was an immediate crash on every machine. This release ships the full bundle (435 MB) built from a clean venv.
 - Added `tests/test_build_artifact.py` — a release-gate that inspects the PyInstaller CArchive TOC + PYZ archive and fails if wx, numpy, pydub, sounddevice, or pedalboard are missing. Also enforces a 50 MB minimum size. Will catch this class of bug on every future build.
 
