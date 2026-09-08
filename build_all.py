@@ -51,10 +51,19 @@ def build_one(spec: str, dist_name: str) -> Path:
 
     exe = DIST / f"SpeechCraft_Studio_{dist_name}.exe"
     if not exe.exists():
-        # Try Core (no underscore)
+        # Try Core (no underscore) — e.g. SpeechCraft_StudioFull.exe
         alt = DIST / f"SpeechCraft_Studio{dist_name}.exe"
         if alt.exists():
             exe = alt
+        else:
+            # Final fallback: the spec's `name=` directive determines the
+            # actual filename. For the Full spec it's just
+            # "SpeechCraft_Studio" (no suffix); for Core it's
+            # "SpeechCraft_Studio_Core".
+            if dist_name.lower() == "full":
+                alt2 = DIST / "SpeechCraft_Studio.exe"
+                if alt2.exists():
+                    exe = alt2
     if not exe.exists():
         sys.exit(f"Expected {exe} after build, but file is missing")
     size_mb = exe.stat().st_size / 1024 / 1024
