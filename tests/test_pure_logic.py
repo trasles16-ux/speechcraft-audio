@@ -508,3 +508,58 @@ def test_module_level_pyaudio_is_defined() -> None:
     import audio_editor
     assert hasattr(audio_editor, "pyaudio"), "audio_editor.pyaudio should be module-level"
     assert audio_editor.pyaudio is not None
+
+
+# ---------------------------------------------------------------------------
+# AST-level regression guard: no function-scope `import sounddevice as sd`
+# ---------------------------------------------------------------------------
+#
+# Issue #14 second-cut: populate_devices() (a closure inside on_audio_setup)
+# had `import sounddevice as sd` inside its body. Even though that branch was
+# only reached for ASIO, Python's name-resolution rules treat `sd` as a local
+# variable throughout the ENTIRE function — so the earlier SoundDevice branch
+# hit UnboundLocalError ("cannot access local variable 'sd' where it is not
+# associated with a value") instead of NameError.
+#
+# Fix: `sd` is now module-level via safe_import, so no function needs to
+# re-import it. This AST test enforces that invariant by scanning the source
+# for `import sounddevice as sd` inside any function/class body. If anyone
+# re-adds that pattern, this test fails before the runtime error can ship.
+
+def test_no_function_scope_sounddevice_import() -> None:
+    """No function in audio_editor.py does `import sounddevice as sd` (issue #14).
+
+    AST scan rather than runtime test so it runs on the Linux smoke CI too.
+    """
+    import ast
+    from pathlib import Path
+
+    src_path = Path(__file__).resolve().parent.parent / "audio_editor.py"
+    tree = ast.parse(src_path.read_text(encoding="utf-8"))
+
+    def walk(node: ast.AST, scope: str) -> list[tuple[str, int]]:
+        """Return [(scope_name, lineno), ...] for every offending import."""
+        offenders: list[tuple[str, int]] = []
+        for child in ast.iter_child_nodes(node):
+            # Recurse into FunctionDef / AsyncFunctionDef / ClassDef
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for stmt in ast.walk(child):
+                    if isinstance(stmt, ast.Import):
+                        for alias in stmt.names:
+                            if alias.name == "sounddevice" and alias.asname == "sd":
+                                offenders.append(
+                                    (f"{scope}.{child.name}", stmt.lineno)
+                                )
+                offenders.extend(walk(child, f"{scope}.{child.name}"))
+            elif isinstance(child, ast.ClassDef):
+                offenders.extend(walk(child, f"{scope}.{child.name}"))
+        return offenders
+
+    # Top-level functions / classes live directly on the module.
+    offenders = walk(tree, "audio_editor")
+    assert not offenders, (
+        f"Found function-scope `import sounddevice as sd` — "
+        f"this shadows the module-level `sd` and causes UnboundLocalError. "
+        f"Module-level `sd` is bound via safe_import; do not re-import. "
+        f"Offenders: {offenders}"
+    )

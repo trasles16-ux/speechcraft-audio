@@ -180,8 +180,13 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
         # ~3 MB; deferring it until the frame is being constructed
         # lets the splash update before this slow import.
         progress("Preparing workspace", "Loading audio device module")
-        global sd
-        import sounddevice as sd  # noqa: F811
+        # NOTE: do NOT do `import sounddevice as sd` here — that would
+        # mark `sd` as a local variable throughout __init__, breaking any
+        # earlier reference to the module-level `sd` (which is bound via
+        # safe_import at module load — see issue #14). `sd` stays a free
+        # variable; this import upgrades the DummyModule fallback to the
+        # real module if it was missing at startup.
+        import sounddevice  # noqa: F811
 
         # Safety / Late Init for UI components
         self.workspace = None
@@ -2388,7 +2393,12 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
                 else:  # Custom ASIO
                     if self.asio_manager:
                         try:
-                            import sounddevice as sd
+                            # sd is module-level via safe_import (issue #14);
+                            # no need to re-import here. Previously this branch
+                            # did `import sounddevice as sd`, which made Python
+                            # treat `sd` as local throughout populate_devices()
+                            # — so line 2356's sd.query_devices() hit
+                            # UnboundLocalError when reached before this branch.
                             devices = sd.query_devices()
                             
                             # Show all devices for ASIO selection
