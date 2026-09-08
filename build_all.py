@@ -137,6 +137,10 @@ def _find_makensis() -> Path | None:
     candidates = [
         Path("C:/Program Files (x86)/NSIS/makensis.exe"),
         Path("C:/Program Files/NSIS/makensis.exe"),
+        # Project-local copy (tools/nsis/nsis-3.10/) — Tracy bundles NSIS
+        # with the source tree so contributors don't need a system install.
+        Path(__file__).resolve().parent / "tools" / "nsis" / "nsis-3.10" / "Bin" / "makensis.exe",
+        Path(__file__).resolve().parent / "tools" / "nsis" / "Bin" / "makensis.exe",
     ]
     for c in candidates:
         if c.exists():

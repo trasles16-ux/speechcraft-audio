@@ -4,7 +4,11 @@ All notable changes to SpeechCraft Audio are documented here. The format follows
 
 ## [Unreleased]
 
-### Fixed (1.1.3)
+### Fixed (1.1.4)
+- **Recording dialog → "name 'sd' is not defined"** when opening File → Record with a default input device (issue #16): `dialogs/recording_dialogs.py` referenced `sd` and `np` in `RecordingDialog.toggle_monitor`'s audio callback without importing either at module level. Same class of bug as #14 and #15, but in a different file that the original fix missed. Now bound at module load via the same `safe_import` pattern used in `audio_editor.py`, with an inline `_MissingAudioModule` placeholder (mirrors `audio_editor.DummyModule`; can't reuse directly due to circular import). On genuine missing dep, the placeholder pops a friendly install-dialog instead of `NameError`. (#16)
+- Added regression test in `test_dialog_smoke.py` asserting module-level `sd`/`np` bindings in `recording_dialogs` and that opening `RecordingDialog` with `input_device_id` set does not raise on construction.
+
+## [1.1.3] — 2026-09-08
 - **`load_audio` silently did nothing on non-WAV files** (issue #13, reported by PaulDrake777): `AudioSegment.from_file()` raises `CouldntEncodeError`/`CouldntDecodeError` when ffmpeg is missing — subclasses of `Exception`, not `FileNotFoundError`, so the existing `except` clause never fired. The exception bubbled up uncaught and wxPython swallowed it silently. `load_audio` now catches any exception, distinguishes ffmpeg-missing from generic decode errors, falls back to `wave.open` for WAV files, and always surfaces a user-facing dialog. (#13)
 - **"Error enumerating devices" + "Output test failed: name 'np' is not defined"** in Advanced Audio Setup (issue #14, #15): `sd`, `pyaudio`, and `np` are now bound at module load via `safe_import()` so the device dialog, level monitor, and test-tone code can always reference them. A nested `import sounddevice as sd` inside `populate_devices()` (and a `global sd; import sounddevice as sd` inside `__init__`) was causing `UnboundLocalError` instead of `NameError` — both removed. AST-scan regression test added: it fails the build if anyone reintroduces function-scope `import sounddevice as sd`. (#14)
 - **Test Input recorded silence on the wrong output device**: `sd.play(test_data, 44100)` used the system default output, ignoring the user's selection in the Output combobox. Now plays on the selected output, and surfaces the recorded peak in the status bar so a dead mic is distinguishable from a broken output path. (#15)
