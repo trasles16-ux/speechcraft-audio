@@ -396,3 +396,115 @@ def test_preset_manager_save_and_load_roundtrip(tmp_path: Path) -> None:
 
     # Clean up
     preset_manager.save_custom_presets({}, {}, {})
+
+
+# ---------------------------------------------------------------------------
+# load_audio — regression tests for issue #13
+# ---------------------------------------------------------------------------
+#
+# Before the fix, load_audio only caught FileNotFoundError. Pydub raises
+# CouldntEncodeError / CouldntDecodeError (subclasses of Exception, not
+# FileNotFoundError) when ffmpeg is missing or fails to spawn. The exception
+# bubbled up uncaught and wxPython silently swallowed it, so Open Audio
+# appeared to do nothing.
+#
+# These tests mock pydub and the dialog to assert that any non-FileNotFoundError
+# exception is surfaced via a MessageBox (and not silently dropped).
+
+@needs_wx
+def test_load_audio_surfaces_pydub_decode_error(tmp_path: Path, monkeypatch) -> None:
+    """load_audio pops a dialog when pydub raises CouldntDecodeError (issue #13)."""
+    import wx
+    from pydub.exceptions import CouldntDecodeError
+
+    import audio_editor
+
+    # Build a fake frame with the minimum surface load_audio touches.
+    class FakeFrame:
+        load_audio = audio_editor.SpeechCraftFrame.load_audio
+        log_area = type("L", (), {"AppendText": staticmethod(lambda s: None)})()
+
+    captured: list[tuple[str, str, int]] = []
+
+    def fake_messagebox(message, caption, style):
+        captured.append((message, caption, style))
+
+    monkeypatch.setattr(wx, "MessageBox", fake_messagebox)
+
+    # Make AudioSegment.from_file raise a non-FileNotFoundError — the bug case.
+    def boom(_path):
+        raise CouldntDecodeError("Couldn't find ffmpeg")
+
+    fake_seg_path = tmp_path / "fake.mp3"
+    fake_seg_path.write_bytes(b"\x00\x00")
+    monkeypatch.setattr(audio_editor.AudioSegment, "from_file", staticmethod(boom))
+
+    # load_audio is unbound; bind to a minimal self.
+    audio_editor.SpeechCraftFrame.load_audio(FakeFrame(), str(fake_seg_path))
+
+    # The dialog must fire — silently dropping is the bug we're guarding against.
+    assert len(captured) == 1, f"Expected one MessageBox call, got {len(captured)}"
+    message, caption, _style = captured[0]
+    assert caption == "FFmpeg Missing"
+    assert "ffmpeg" in message.lower() or "ffmpeg" in message
+
+
+@needs_wx
+def test_load_audio_file_not_found_shows_dialog(tmp_path: Path, monkeypatch) -> None:
+    """load_audio pops a dialog when the file itself is missing."""
+    import wx
+
+    import audio_editor
+
+    class FakeFrame:
+        load_audio = audio_editor.SpeechCraftFrame.load_audio
+
+    captured: list[tuple[str, str, int]] = []
+
+    monkeypatch.setattr(
+        wx, "MessageBox",
+        lambda m, c, s: captured.append((m, c, s)),
+    )
+
+    # Patch FileNotFoundError into the except path: original code only
+    # handled ffmpeg-missing for non-WAV; file-not-found should still
+    # produce a clear message.
+    monkeypatch.setattr(audio_editor.AudioSegment, "from_file",
+                        staticmethod(lambda p: (_ for _ in ()).throw(FileNotFoundError(p))))
+
+    audio_editor.SpeechCraftFrame.load_audio(FakeFrame(), str(tmp_path / "nope.wav"))
+
+    assert len(captured) == 1
+    _msg, caption, _style = captured[0]
+    assert caption == "Cannot Open Audio"
+    assert "not found" in _msg.lower()
+
+
+# ---------------------------------------------------------------------------
+# Module-level sd / pyaudio binding — regression test for issue #14
+# ---------------------------------------------------------------------------
+#
+# Before the fix, `sd` and `pyaudio` were only bound inside
+# SpeechCraftFrame.__init__ via `global sd; import sounddevice as sd`.
+# If anything reached the device dialog or _play_test_tone before __init__
+# finished, NameError surfaced as "Error enumerating devices".
+#
+# After the fix, both are bound at module load via safe_import, so importing
+# audio_editor gives a usable `sd` reference even if __init__ never runs.
+
+@needs_wx
+def test_module_level_sd_is_defined() -> None:
+    """audio_editor.sd is defined at module load (issue #14)."""
+    import audio_editor
+    assert hasattr(audio_editor, "sd"), "audio_editor.sd should be module-level"
+    # Either the real sounddevice module, or the DummyModule fallback —
+    # both are acceptable. The contract is: it must be defined, not None.
+    assert audio_editor.sd is not None
+
+
+@needs_wx
+def test_module_level_pyaudio_is_defined() -> None:
+    """audio_editor.pyaudio is defined at module load (issue #14)."""
+    import audio_editor
+    assert hasattr(audio_editor, "pyaudio"), "audio_editor.pyaudio should be module-level"
+    assert audio_editor.pyaudio is not None

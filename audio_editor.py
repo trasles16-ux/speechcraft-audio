@@ -1151,26 +1151,66 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
             seg = AudioSegment.from_file(path)
             print(f"DEBUG: AudioSegment loaded. Duration: {len(seg)}ms, Channels: {seg.channels}")
         except FileNotFoundError as e:
-            # FFmpeg not found - try direct WAV loading
-            if path.lower().endswith('.wav'):
-                import wave
-                with wave.open(path, 'rb') as wav:
-                    frames = wav.readframes(wav.getnframes())
-                    seg = AudioSegment(
-                        data=frames,
-                        sample_width=wav.getsampwidth(),
-                        frame_rate=wav.getframerate(),
-                        channels=wav.getnchannels()
+            # The file itself doesn't exist on disk
+            wx.MessageBox(
+                f"File not found:\n{path}",
+                "Cannot Open Audio", wx.ICON_ERROR
+            )
+            return
+        except Exception as e:
+            # Pydub raises CouldntEncodeError / CouldntDecodeError (subclasses of
+            # Exception, NOT FileNotFoundError) when ffmpeg is missing or fails
+            # to spawn — previously this branch was unreachable and the error
+            # bubbled up uncaught, silently killing Open Audio. Now we surface
+            # a clear dialog for both WAV-fallback and MP3-needs-ffmpeg cases.
+            from pydub.exceptions import CouldntEncodeError, CouldntDecodeError
+            err_name = type(e).__name__
+            err_msg = str(e) or "(no message)"
+            ffmpeg_missing = (
+                "ffmpeg" in err_msg.lower()
+                or "couldn't find" in err_msg.lower()
+                or "could not find" in err_msg.lower()
+                or "no such file" in err_msg.lower()
+                or isinstance(e, (CouldntEncodeError, CouldntDecodeError))
+            )
+            if path.lower().endswith('.wav') and ffmpeg_missing:
+                try:
+                    import wave
+                    with wave.open(path, 'rb') as wav:
+                        frames = wav.readframes(wav.getnframes())
+                        seg = AudioSegment(
+                            data=frames,
+                            sample_width=wav.getsampwidth(),
+                            frame_rate=wav.getframerate(),
+                            channels=wav.getnchannels()
+                        )
+                    self.log_area.AppendText("Loaded WAV directly (ffmpeg not found)\n")
+                    self.load_audio_from_segment(seg, name=os.path.basename(path))
+                    return
+                except Exception as wav_err:
+                    wx.MessageBox(
+                        f"Cannot load {os.path.basename(path)}.\n\n"
+                        f"WAV fallback failed: {wav_err}\n\n"
+                        f"Original pydub error ({err_name}): {err_msg}",
+                        "Cannot Open Audio", wx.ICON_ERROR
                     )
-                self.log_area.AppendText("Loaded WAV directly (ffmpeg not found)\n")
-            else:
+                    return
+            if ffmpeg_missing:
                 wx.MessageBox(
                     f"Cannot load {os.path.basename(path)}.\n\n"
-                    "FFmpeg is required for MP3/other formats.\n"
-                    "Please install ffmpeg or use WAV files.",
+                    "FFmpeg is required for MP3 and other non-WAV formats.\n"
+                    "Please install ffmpeg or use WAV files.\n\n"
+                    f"Details: {err_msg}",
                     "FFmpeg Missing", wx.ICON_ERROR
                 )
                 return
+            # Generic audio-load failure — surface it instead of swallowing silently.
+            wx.MessageBox(
+                f"Cannot load {os.path.basename(path)}.\n\n"
+                f"Error ({err_name}): {err_msg}",
+                "Cannot Open Audio", wx.ICON_ERROR
+            )
+            return
 
         self.load_audio_from_segment(seg, name=os.path.basename(path))
 
