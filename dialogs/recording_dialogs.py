@@ -34,6 +34,58 @@ beyond what the dialog returns through ``ShowModal()``.
 import wx
 
 
+# sounddevice and numpy are used by RecordingDialog.toggle_monitor (level
+# monitoring) and would raise NameError if either is genuinely missing or
+# if any future refactor moves the toggle_monitor body somewhere that
+# loses a local `import sounddevice as sd`. Bind them at module load
+# via the same safe_import pattern used in audio_editor.py — if either
+# module is missing, they become a placeholder whose attribute accesses
+# pop a friendly install-dialog instead of crashing.
+#
+# Without this, RecordingDialog.toggle_monitor raises
+# "name 'sd' is not defined" / "name 'np' is not defined" the moment a
+# user opens the Record dialog with a default input device selected,
+# because the auto-start at init_ui() fires before any code path can
+# import them. (Reported 2026-09-07.)
+#
+# Note: we cannot import audio_editor.DummyModule directly because
+# audio_editor imports this module at its top level (circular). Inline
+# a minimal version that pops the same kind of dialog.
+import importlib as _importlib
+
+
+class _MissingAudioModule:
+    """Placeholder that pops a dialog and raises NameError on any attribute access."""
+
+    def __init__(self, name: str, err: str):
+        self._name = name
+        self._err = err
+
+    def __getattr__(self, attr: str):
+        def _raise(*args, **kwargs):
+            wx.MessageBox(
+                f"The '{attr}' feature requires the '{self._name}' module, which is missing.\n\n"
+                f"Error: {self._err}\n\n"
+                "Please reinstall SpeechCraft or check your installation.",
+                "Recording — Feature Unavailable",
+                wx.ICON_ERROR,
+            )
+            raise NameError(f"name '{self._name}.{attr}' is not defined (module missing)")
+        return _raise
+
+
+def _safe_import(name: str):
+    try:
+        return _importlib.import_module(name)
+    except Exception as e:
+        print(f"recording_dialogs: {name} not available: {e}")
+        return _MissingAudioModule(name, str(e))
+
+
+sd = _safe_import("sounddevice")
+np = _safe_import("numpy")
+
+
 class RecordingDialog(wx.Dialog):
     """Dialog for recording with level monitoring"""
     

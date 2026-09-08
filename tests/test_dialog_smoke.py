@@ -644,6 +644,35 @@ def test_recording_dialog_constructs_with_defaults(wx_app: Any) -> None:
 
 
 @needs_wx
+def test_recording_dialog_module_level_sd_and_np_defined() -> None:
+    """recording_dialogs binds sd and np at module load (issue #16).
+
+    RecordingDialog.toggle_monitor references sd.InputStream and
+    np.sqrt/np.mean in its audio_callback closure. Before the fix,
+    neither was imported at module level, so the auto-start at
+    init_ui() (which fires when input_device_id is set) raised
+    'name sd is not defined' / 'name np is not defined' on first
+    attempt to monitor levels.
+    """
+    import dialogs.recording_dialogs as rd
+
+    assert hasattr(rd, "sd"), "recording_dialogs.sd should be module-level"
+    assert hasattr(rd, "np"), "recording_dialogs.np should be module-level"
+    assert rd.sd is not None
+    assert rd.np is not None
+    # And crucially: when input_device_id is set, opening the dialog
+    # must not raise NameError when the auto-start fires.
+    dlg = rd.RecordingDialog(None, input_device_id=99999)  # bogus device, but binding is fine
+    try:
+        # The auto-start uses wx.CallAfter(toggle_monitor, None), so
+        # immediately destroy the dialog before it fires — we just
+        # want to confirm the *import path* doesn't fail.
+        pass
+    finally:
+        dlg.Destroy()
+
+
+@needs_wx
 def test_recording_dialog_constructs_with_device_id(wx_app: Any) -> None:
     """RecordingDialog stores the input_device_id passed to it."""
     from dialogs.recording_dialogs import RecordingDialog
