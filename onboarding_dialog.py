@@ -28,12 +28,40 @@ import wx
 # Re-export the canonical prefs helpers so callers that already import
 # from this module keep working. New code should ``from prefs import
 # load_prefs, save_prefs`` directly.
+#
+# We wrap rather than alias so that monkeypatching ``od_module.PREFS_FILE``
+# in tests continues to work: the wrapper reads PREFS_FILE from this
+# module's global namespace at call time, not from prefs' internal global.
 from prefs import (  # noqa: F401  (re-export)
     PREFS_DIR,
     PREFS_FILE,
-    load_prefs as _load_prefs,
-    save_prefs as _save_prefs,
+    load_prefs,
+    save_prefs,
 )
+
+
+def _load_prefs(prefs_file: Path | None = None) -> dict:
+    """Read setup.json (via this module's PREFS_FILE if not overridden).
+
+    Kept under the legacy underscore name for backward compatibility.
+    The actual logic lives in :func:`prefs.load_prefs`.
+    """
+    return load_prefs(prefs_file=(prefs_file if prefs_file is not None else PREFS_FILE))
+
+
+def _save_prefs(
+    prefs_dict: dict | None = None,
+    *,
+    prefs_file: Path | None = None,
+) -> None:
+    """Write prefs to setup.json (via this module's PREFS_FILE if not overridden).
+
+    Kept under the legacy underscore name for backward compatibility.
+    The actual logic lives in :func:`prefs.save_prefs`.
+    """
+    if prefs_dict is None:
+        raise TypeError("_save_prefs() missing required argument: 'prefs_dict'")
+    save_prefs(prefs_dict, prefs_file=(prefs_file if prefs_file is not None else PREFS_FILE))
 
 
 def get_preferred_bundle() -> str | None:
