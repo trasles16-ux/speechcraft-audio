@@ -226,6 +226,69 @@ def test_process_file_creates_output(tmp_path: Path) -> None:
     assert abs(result.duration_seconds - 0.5) < 0.01
 
 
+def test_breath_smoothing_module_imports_without_scipy() -> None:
+    """Regression test for Core-build behaviour: breath_smoothing.py
+    must import cleanly even when scipy is unavailable. The Core
+    PyInstaller spec excludes scipy to keep the EXE small, so any
+    top-level ``from scipy.signal import ...`` would crash the
+    Core build at startup with a confusing 'module missing' dialog.
+
+    The fix is to lazy-import scipy inside butter_lowpass /
+    lowpass_filter so the module itself imports cleanly. Users who
+    actually try to run breath smoothing in Core get a clear
+    ImportError naming scipy as the missing dep.
+    """
+    import sys
+
+    # Hide scipy to simulate the Core build. We must set these to
+    # None (not del) so any ``import scipy`` statement raises
+    # ImportError rather than succeeding via fallback resolution.
+    saved_scipy = sys.modules.get("scipy")
+    saved_scipy_signal = sys.modules.get("scipy.signal")
+    sys.modules["scipy"] = None  # type: ignore[assignment]
+    sys.modules["scipy.signal"] = None  # type: ignore[assignment]
+
+    # Force a fresh import in case pytest has it cached.
+    if "breath_smoothing" in sys.modules:
+        del sys.modules["breath_smoothing"]
+
+    try:
+        import breath_smoothing  # noqa: F401  -- the import IS the test
+
+        # Module loaded without raising -- the actual regression we
+        # were fixing.
+        assert hasattr(breath_smoothing, "butter_lowpass")
+        assert hasattr(breath_smoothing, "lowpass_filter")
+        assert hasattr(breath_smoothing, "process_file")
+
+        # But calling butter_lowpass surfaces a clear ImportError,
+        # not the old confusing "DummyModule missing feature" path.
+        try:
+            breath_smoothing.butter_lowpass(cutoff=6000, fs=44100)
+            raise AssertionError("expected ImportError when scipy is missing")
+        except ImportError as e:
+            msg = str(e)
+            assert "scipy" in msg.lower(), (
+                f"ImportError message should mention scipy, got: {msg}"
+            )
+            assert "full" in msg.lower(), (
+                f"ImportError message should mention the Full build, got: {msg}"
+            )
+    finally:
+        # Restore scipy so subsequent tests in the same session
+        # (and any teardown) work normally.
+        if saved_scipy is not None:
+            sys.modules["scipy"] = saved_scipy
+        else:
+            sys.modules.pop("scipy", None)
+        if saved_scipy_signal is not None:
+            sys.modules["scipy.signal"] = saved_scipy_signal
+        else:
+            sys.modules.pop("scipy.signal", None)
+        if "breath_smoothing" in sys.modules:
+            del sys.modules["breath_smoothing"]
+
+
 # ---------------------------------------------------------------------------
 # word_alignment.py — WordAlignment and WordSegment
 # ---------------------------------------------------------------------------

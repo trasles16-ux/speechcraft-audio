@@ -190,7 +190,10 @@ class Equalizer(AudioEffect):
 
     Args:
         bands: List of (frequency_hz, gain_db) tuples. Use (freq, 0) to skip a band.
-               Pass None to use flat defaults (all 0 dB).
+               Pass None to use flat defaults (all 0 dB). A dict of
+               {freq_hz: gain_db} is also accepted (this is what
+               EQPresetDialog.get_values() returns) and normalised to
+               the list-of-tuples form.
     """
     BAND_FREQUENCIES = [100, 300, 1000, 3000, 8000]
     BAND_LABELS = [
@@ -204,6 +207,11 @@ class Equalizer(AudioEffect):
     def __init__(self, bands=None):
         if bands is None:
             bands = [(f, 0) for f in self.BAND_FREQUENCIES]
+        elif isinstance(bands, dict):
+            # EQPresetDialog.get_values() returns {freq: gain_db}.
+            # Convert to a list of tuples so apply_to_numpy's
+            # `for freq, gain in self.bands` works.
+            bands = list(bands.items())
         self.bands = bands
 
     def apply_to_numpy(self, samples, sample_rate):

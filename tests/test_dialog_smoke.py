@@ -455,6 +455,411 @@ def test_breath_dialog_constructs_and_get_values_has_required_keys(
 
 
 @needs_wx
+def test_breath_dialog_every_control_has_meaningful_accessible_name(
+    wx_app: Any,
+) -> None:
+    """Regression test for an NVDA bug: the Breath Smoothing dialog
+    exposed Light / Medium / Heavy radio buttons with default
+    accessible names ('radioButton'), so NVDA saw three identical
+    controls and skipped the first one. JAWS reads the label even
+    without SetName, which is why JAWS users could find 'Light' but
+    NVDA users couldn't.
+
+    This test asserts every interactive control in the dialog has an
+    explicit accessible name that contains its visual label (or some
+    other meaningful text). It walks the dialog tree and checks every
+    RadioButton, Slider, Button, and StaticText with non-empty label.
+    """
+    import wx  # used here for type checks; only imported when wx is available
+    from dialogs.effects_dialogs import BreathSmoothingPresetDialog
+
+    dlg = BreathSmoothingPresetDialog(None)
+    try:
+        # The dialog itself: name should be the title, not 'dialog'.
+        assert dlg.GetName() == "Breath Smoothing", (
+            f"dialog accessible name is {dlg.GetName()!r}, expected 'Breath Smoothing'"
+        )
+
+        # Walk every control and check that interactive widgets have
+        # meaningful names (not the wx defaults).
+        def walk(widget):
+            yield widget
+            for child in widget.GetChildren():
+                yield from walk(child)
+
+        # Defaults wx assigns when SetName() is not called
+        bad_defaults = {"dialog", "staticText", "radioButton", "button", "slider", "groupBox"}
+        interactive_types = (wx.RadioButton, wx.Slider, wx.Button)
+
+        problems = []
+        for widget in walk(dlg):
+            cls = type(widget).__name__
+            name = widget.GetName()
+            # Get the visible label (StaticText, Button, RadioButton all
+            # implement GetLabel; Sliders don't but their tooltip holds the description).
+            try:
+                label = widget.GetLabel()
+            except Exception:
+                label = ""
+            if isinstance(widget, interactive_types):
+                # Interactive control: must have a meaningful name.
+                if name in bad_defaults:
+                    problems.append(
+                        f"{cls} label={label!r:30}  name={name!r}  (default; needs SetName)"
+                    )
+                # And the name must contain the visible label (or close
+                # to it) so the screen reader announces it. Strip
+                # trailing punctuation for comparison -- button labels
+                # often end in "..." but accessible names use "," etc.
+                if label:
+                    label_clean = label.rstrip(".…").rstrip()
+                    if label_clean and label_clean not in name:
+                        problems.append(
+                            f"{cls} label={label!r:30}  name={name!r}  (name doesn't mention label)"
+                        )
+            elif isinstance(widget, wx.StaticText) and label:
+                # Static text with visible content should announce that
+                # content (not the default 'staticText').
+                if name in bad_defaults:
+                    problems.append(
+                        f"StaticText label={label[:40]!r}  name={name!r}  (default)"
+                    )
+        assert not problems, "Accessibility problems found:\n  " + "\n  ".join(problems)
+    finally:
+        dlg.Destroy()
+
+
+@needs_wx
+def test_breath_dialog_radio_preset_is_mutually_exclusive_group(
+    wx_app: Any,
+) -> None:
+    """Regression test for a real NVDA bug: the Strength radios were
+    created with RB_GROUP on 'Medium' instead of the first radio
+    ('Light'). That split them into two Windows radio groups --
+    Light in its own group, Medium+Heavy in another. NVDA walks
+    radio groups, and its standard radio-navigation (arrow keys,
+    browse-mode 'r' key) only steps within the currently-focused
+    group. Because the dialog opens with Medium selected, focus
+    lands in the Medium+Heavy group, and Light (the other group)
+    is unreachable through normal radio navigation. JAWS matches
+    by label and could still find Light, which is why the bug
+    only showed up for NVDA users.
+
+    The fix puts RB_GROUP on the first radio so all three are in
+    one group. This test asserts the radios are mutually exclusive:
+    selecting any one deselects the others.
+    """
+    from dialogs.effects_dialogs import BreathSmoothingPresetDialog
+
+    dlg = BreathSmoothingPresetDialog(None)
+    try:
+        # Default: Medium selected
+        assert dlg.preset_radios["Medium"].GetValue()
+        assert not dlg.preset_radios["Light"].GetValue()
+        assert not dlg.preset_radios["Heavy"].GetValue()
+
+        # Select Light -> Medium must deselect
+        dlg.preset_radios["Light"].SetValue(True)
+        assert dlg.preset_radios["Light"].GetValue()
+        assert not dlg.preset_radios["Medium"].GetValue(), (
+            "Light and Medium are in separate radio groups; "
+            "selecting Light did not deselect Medium. "
+            "Check that RB_GROUP is on the FIRST radio."
+        )
+        assert not dlg.preset_radios["Heavy"].GetValue()
+
+        # Select Medium -> Light must deselect
+        dlg.preset_radios["Medium"].SetValue(True)
+        assert not dlg.preset_radios["Light"].GetValue()
+        assert dlg.preset_radios["Medium"].GetValue()
+
+        # Select Heavy -> Medium must deselect
+        dlg.preset_radios["Heavy"].SetValue(True)
+        assert not dlg.preset_radios["Medium"].GetValue()
+        assert dlg.preset_radios["Heavy"].GetValue()
+    finally:
+        dlg.Destroy()
+
+
+def _assert_radios_mutually_exclusive(dlg, default_selected: str, others: list[str]) -> None:
+    """Shared check: the dialog's preset radios form ONE mutually-
+    exclusive Windows radio group.
+
+    Catches the RB_GROUP misconfiguration where either:
+      - RB_GROUP is on the *wrong* radio (splits into two groups), or
+      - RB_GROUP is on *every* radio (each in its own group, all
+        read 'selected' at once).
+    Either way NVDA sees a list of unrelated standalone radios instead
+    of one exclusive group, and the data is corrupted (multiple
+    presets 'selected').
+    """
+    # Opening state: only the default is selected, exactly one.
+    assert dlg.preset_radios[default_selected].GetValue(), (
+        f"default preset {default_selected!r} should be selected on open"
+    )
+    openly_selected = [n for n, r in dlg.preset_radios.items() if r.GetValue()]
+    assert len(openly_selected) == 1, (
+        f"exactly one radio should be selected on open, got {openly_selected} "
+        f"(RB_GROUP misconfiguration: every radio in its own group)"
+    )
+
+    # Select each non-default preset and verify it exclusively
+    for other in others:
+        dlg.preset_radios[other].SetValue(True)
+        now_selected = [n for n, r in dlg.preset_radios.items() if r.GetValue()]
+        assert now_selected == [other], (
+            f"selecting {other!r} should leave only {other!r} selected; "
+            f"got {now_selected} (radios are not in one exclusive group)"
+        )
+
+
+@needs_wx
+def test_compressor_dialog_radio_preset_is_mutually_exclusive_group(
+    wx_app: Any,
+) -> None:
+    """Regression test: the Compressor preset radios all had
+    RB_GROUP, so each was in its own Windows radio group and every
+    one read as 'selected' at the same time. That broke NVDA radio-
+    group navigation and was a data bug (multiple presets selected).
+    Fix: RB_GROUP on the first radio only, so all presets form one
+    mutually-exclusive group, with the default preset selected on open.
+    """
+    from dialogs.effects_dialogs import CompressorPresetDialog
+
+    dlg = CompressorPresetDialog(None)
+    try:
+        others = [n for n in dlg.preset_radios if n != dlg.selected_preset]
+        _assert_radios_mutually_exclusive(dlg, dlg.selected_preset, others)
+    finally:
+        dlg.Destroy()
+
+
+@needs_wx
+def test_eq_dialog_radio_preset_is_mutually_exclusive_group(
+    wx_app: Any,
+) -> None:
+    """Regression test: same RB_GROUP bug as the Compressor dialog,
+    applied to the EQ preset radios. All EQ presets must form one
+    mutually-exclusive group with the default preset selected on open.
+    """
+    from dialogs.effects_dialogs import EQPresetDialog
+
+    dlg = EQPresetDialog(None)
+    try:
+        others = [n for n in dlg.preset_radios if n != dlg.selected_preset]
+        _assert_radios_mutually_exclusive(dlg, dlg.selected_preset, others)
+    finally:
+        dlg.Destroy()
+
+
+@needs_wx
+def test_breath_dialog_each_preset_radio_has_distinct_accessible_name(
+    wx_app: Any,
+) -> None:
+    """Direct test for the user-visible bug: Light, Medium, Heavy
+    must each have a unique accessible name containing its label, so
+    NVDA (and any screen reader) can find each one independently."""
+    from dialogs.effects_dialogs import BreathSmoothingPresetDialog
+
+    dlg = BreathSmoothingPresetDialog(None)
+    try:
+        names = []
+        for name, radio in dlg.preset_radios.items():
+            accessible = radio.GetName()
+            assert accessible != "radioButton", (
+                f"{name} radio has default accessible name; NVDA can't find it"
+            )
+            assert name in accessible, (
+                f"{name} radio accessible name {accessible!r} should contain the label"
+            )
+            names.append(accessible)
+        # All radios must have distinct accessible names (otherwise NVDA
+        # may collapse them into one entry).
+        assert len(set(names)) == len(names), (
+            f"Radio accessible names must be unique; got {names}"
+        )
+    finally:
+        dlg.Destroy()
+
+
+# ---------------------------------------------------------------------------
+# Sweep: every dialog in the project must have meaningful accessible
+# names on every interactive control. Walks all 8 dialogs and applies
+# the same checks the per-dialog tests above do, but in one go so a
+# regression in any dialog is caught by one failing test.
+# ---------------------------------------------------------------------------
+
+
+def _walk_widgets(widget):
+    """Yield every widget in the tree rooted at ``widget``."""
+    yield widget
+    for child in widget.GetChildren():
+        yield from _walk_widgets(child)
+
+
+def _audit_dialog(dlg, *, dialog_name: str, allowed_no_name: set[type] | None = None):
+    """Return a list of accessibility problems found in ``dlg``.
+
+    Each problem is a human-readable string. An empty list means the
+    dialog passed the audit.
+
+    ``allowed_no_name`` lets the caller exempt specific widget classes
+    from the audit (e.g. plain Panels which never need an accessible
+    name).
+    """
+    import wx  # used here for type checks; only imported when wx is available
+
+    allowed_no_name = allowed_no_name or set()
+    bad_defaults = {
+        "dialog", "staticText", "radioButton", "check",
+        "slider", "choice", "text", "listBox", "button",
+        "gauge", "groupBox", "panel", "frame",
+    }
+    interactive_types = (wx.RadioButton, wx.Slider, wx.Button, wx.CheckBox)
+    problems: list[str] = []
+
+    for widget in _walk_widgets(dlg):
+        cls = type(widget)
+        if cls in allowed_no_name:
+            continue
+        if cls is wx.StaticBox and getattr(widget, "GetLabel", lambda: "")() == "":
+            # Empty StaticBox is just a layout container.
+            continue
+
+        name = widget.GetName()
+        try:
+            label = widget.GetLabel()
+        except Exception:
+            label = ""
+
+        if cls in interactive_types or (cls is wx.StaticText and label):
+            if name in bad_defaults:
+                problems.append(
+                    f"  [{dialog_name}] {cls.__name__} label={label!r:30}  "
+                    f"name={name!r:24}  (default; needs SetName)"
+                )
+            # Interactive controls: name should mention the visible
+            # label. Strip trailing ellipsis/dot punctuation since
+            # accessible names use commas instead.
+            if cls in interactive_types and label:
+                label_clean = label.rstrip(".…").rstrip()
+                if label_clean and label_clean not in name:
+                    problems.append(
+                        f"  [{dialog_name}] {cls.__name__} label={label!r:30}  "
+                        f"name={name!r:60}  (name doesn't mention label)"
+                    )
+
+    return problems
+
+
+@needs_wx
+def test_every_dialog_passes_accessibility_audit(wx_app: Any) -> None:
+    """Sweep: every dialog in the project must have meaningful
+    accessible names on every interactive control.
+
+    JAWS reads labels even when SetName is missing, so JAWS users
+    often don't notice these bugs. NVDA relies on SetName verbatim
+    and either announces "radioButton" / "slider" / "staticText"
+    (useless) or skips the control entirely. This test catches both.
+
+    Walks:
+    - BreathSmoothingPresetDialog  (done in v1 of this fix)
+    - EffectSettingsDialog
+    - CompressorPresetDialog
+    - EQPresetDialog
+    - RoomToneMatchDialog
+    - BatchProcessDialog
+    - RecordingDialog
+    - StudioRecordingDialog
+    """
+    import wx
+    from dialogs.effects_dialogs import (
+        EffectSettingsDialog,
+        BreathSmoothingPresetDialog,
+        CompressorPresetDialog,
+        EQPresetDialog,
+        RoomToneMatchDialog,
+        BatchProcessDialog,
+    )
+    from dialogs.recording_dialogs import (
+        RecordingDialog,
+        StudioRecordingDialog,
+    )
+
+    problems: list[str] = []
+
+    # EffectSettingsDialog takes (parent, title, params)
+    dlg = EffectSettingsDialog(
+        None,
+        title="Effect Settings",
+        params={"Threshold": (-20, -60, 0), "Ratio": 4, "Wet/Dry": 1.0},
+    )
+    try:
+        problems.extend(_audit_dialog(dlg, dialog_name="EffectSettingsDialog"))
+    finally:
+        dlg.Destroy()
+
+    # BreathSmoothingPresetDialog -- already audited per-dialog, but
+    # include in sweep for completeness.
+    dlg = BreathSmoothingPresetDialog(None)
+    try:
+        problems.extend(_audit_dialog(dlg, dialog_name="BreathSmoothingPresetDialog"))
+    finally:
+        dlg.Destroy()
+
+    # CompressorPresetDialog
+    dlg = CompressorPresetDialog(None)
+    try:
+        problems.extend(_audit_dialog(dlg, dialog_name="CompressorPresetDialog"))
+    finally:
+        dlg.Destroy()
+
+    # EQPresetDialog
+    dlg = EQPresetDialog(None)
+    try:
+        problems.extend(_audit_dialog(dlg, dialog_name="EQPresetDialog"))
+    finally:
+        dlg.Destroy()
+
+    # RoomToneMatchDialog takes (parent, track_names, track_durations)
+    dlg = RoomToneMatchDialog(
+        None,
+        track_names=["Track 1", "Track 2"],
+        track_durations=[10.0, 20.0],
+    )
+    try:
+        problems.extend(_audit_dialog(dlg, dialog_name="RoomToneMatchDialog"))
+    finally:
+        dlg.Destroy()
+
+    # BatchProcessDialog
+    dlg = BatchProcessDialog(None)
+    try:
+        problems.extend(_audit_dialog(dlg, dialog_name="BatchProcessDialog"))
+    finally:
+        dlg.Destroy()
+
+    # RecordingDialog
+    dlg = RecordingDialog(None, input_device_id=None)
+    try:
+        problems.extend(_audit_dialog(dlg, dialog_name="RecordingDialog"))
+    finally:
+        dlg.Destroy()
+
+    # StudioRecordingDialog takes script_lines
+    dlg = StudioRecordingDialog(None, script_lines=["line 1"])
+    try:
+        problems.extend(_audit_dialog(dlg, dialog_name="StudioRecordingDialog"))
+    finally:
+        dlg.Destroy()
+
+    assert not problems, (
+        "Accessibility problems found across dialogs:\n"
+        + "\n".join(problems)
+    )
+
+
+@needs_wx
 def test_breath_dialog_get_values_rms_thresh_inversely_proportional_to_sens(
     wx_app: Any,
 ) -> None:
@@ -571,6 +976,47 @@ def test_eq_dialog_get_preset_name_returns_string(wx_app: Any) -> None:
         name = dlg.get_preset_name()
         assert isinstance(name, str)
         assert len(name) > 0
+    finally:
+        dlg.Destroy()
+
+
+@needs_wx
+def test_eq_dialog_values_round_trip_through_equalizer(wx_app: Any) -> None:
+    """Regression test for a user-visible crash: selecting an EQ
+    preset and clicking OK raised
+    ``ValueError: cannot unpack non-iterable int object``.
+
+    Root cause: EQPresetDialog.get_values() returns a dict
+    ``{freq_hz: gain_db}``, but audio_effects.Equalizer.apply_to_numpy
+    expected a list of (freq, gain) tuples and did
+    ``for freq, gain in self.bands``. Iterating a dict yields its
+    keys (ints), so unpacking ``freq, gain = 100`` raised.
+
+    The fix normalises the dict to a list of tuples in
+    Equalizer.__init__. This test exercises the full path:
+    dialog.get_values() -> Equalizer(bands=...) -> apply_to_numpy.
+    """
+    import numpy as np
+    from dialogs.effects_dialogs import EQPresetDialog
+    import audio_effects
+
+    dlg = EQPresetDialog(None)
+    try:
+        values = dlg.get_values()
+        assert isinstance(values, dict), (
+            "get_values() should return a dict for the Equalizer"
+        )
+        # Exercise the exact call the audio editor makes on OK.
+        eff = audio_effects.Equalizer(bands=values)
+        # apply_to_numpy is where the old crash lived.
+        samples = np.zeros(44100, dtype=np.float32)
+        out = eff.apply_to_numpy(samples, 44100)
+        assert out.shape == samples.shape
+        # Also verify the list-of-tuples shape still works (config.py uses it)
+        tuple_bands = list(values.items())
+        eff2 = audio_effects.Equalizer(bands=tuple_bands)
+        out2 = eff2.apply_to_numpy(samples, 44100)
+        assert out2.shape == samples.shape
     finally:
         dlg.Destroy()
 
