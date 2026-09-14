@@ -8,7 +8,7 @@ Linux smoke CI.
 The wizard architecture:
 
 - setup_wizard.run_setup_wizard(parent) is the entry point
-- SetupWizardDialog is the modal wx.Dialog with 5 pages
+- SetupWizardDialog is the modal wx.Dialog with 6 pages
 - Each page is a _WizardPage subclass with a .collect(flags) method
 - Progress is saved to setup.json on each page transition
 - wizard_completed flips to True only on the Finish button
@@ -297,8 +297,8 @@ def test_summary_page_lists_every_toggled_flag(wx_app):
 
 
 @needs_wx
-def test_wizard_dialog_constructs_with_five_pages(wx_app, monkeypatch):
-    """The full SetupWizardDialog builds 5 pages and wires nav buttons."""
+def test_wizard_dialog_constructs_with_six_pages(wx_app, monkeypatch):
+    """The full SetupWizardDialog builds 6 pages and wires nav buttons."""
     if wx_app is None:
         pytest.skip("wxPython not installed")
     from setup_wizard import SetupWizardDialog
@@ -314,7 +314,7 @@ def test_wizard_dialog_constructs_with_five_pages(wx_app, monkeypatch):
         prefs_file=__import__("pathlib").Path("/tmp/speechcraft_test.json"),
     )
     try:
-        assert dlg.GetPageCount() == 5
+        assert dlg.GetPageCount() == 6
         assert dlg.GetName() != ""
     finally:
         dlg.Destroy()

@@ -397,8 +397,8 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
 
         # --- 2. TOOLS ---
         m_tools = wx.Menu()
-        self.add_item(m_tools, "&Transcribe\tCtrl+T", self.on_transcribe)
-        self.add_item(m_tools, "Auto &Line Placer\tCtrl+P", self.on_line_placer)
+        self.transcribe_item = self.add_item(m_tools, "&Transcribe\tCtrl+T", self.on_transcribe)
+        self.line_placer_item = self.add_item(m_tools, "Auto &Line Placer\tCtrl+P", self.on_line_placer)
         m_tools.AppendSeparator()
         self.add_item(m_tools, "&Studio Recording\tCtrl+Shift+R", self.on_studio_recording)
         self.menubar.Append(m_tools, "&Tools")
@@ -438,12 +438,14 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
         self.add_item(m_effects, "&Normalize\tF5", self.on_normalize)
         self.add_item(m_effects, "Denoise / Noise Gate\tF6", self.on_denoise)
         m_effects.AppendSeparator()
-        self.add_item(m_effects, "Room Remover\tCtrl+Shift+H", self.on_effect_room)
-        self.add_item(m_effects, "Compressor\tCtrl+Shift+P", self.on_effect_compressor)
-        self.add_item(m_effects, "De-esser\tCtrl+Shift+S", self.on_effect_deesser)
-        self.add_item(m_effects, "Equalizer\tCtrl+Shift+Q", self.on_effect_equalizer)
-        m_effects.AppendSeparator()
-        self.add_item(m_effects, "Auto-&Ducker\tCtrl+D", self.on_auto_ducker)
+        # Pedalboard-dependent effects — gated on the pedalboard_effects flag
+        self.effects_pedalboard_items = [
+            self.add_item(m_effects, "Room Remover\tCtrl+Shift+H", self.on_effect_room),
+            self.add_item(m_effects, "Compressor\tCtrl+Shift+P", self.on_effect_compressor),
+            self.add_item(m_effects, "De-esser\tCtrl+Shift+S", self.on_effect_deesser),
+            self.add_item(m_effects, "Equalizer\tCtrl+Shift+Q", self.on_effect_equalizer),
+            self.add_item(m_effects, "Auto-&Ducker\tCtrl+D", self.on_auto_ducker),
+        ]
         self.menubar.Append(m_effects, "&Effects")
 
         # --- 5. PLAYBACK ---
@@ -462,8 +464,8 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
 
         # --- 5b. SPEECH (TTS) ---
         m_speech = wx.Menu()
-        self.add_item(m_speech, "&Edge TTS (Microsoft) — Free", self.on_edge_tts)
-        self.add_item(m_speech, "&Piper TTS — On-device neural", self.on_piper_tts)
+        self.edge_tts_item = self.add_item(m_speech, "&Edge TTS (Microsoft) — Free", self.on_edge_tts)
+        self.piper_tts_item = self.add_item(m_speech, "&Piper TTS — On-device neural", self.on_piper_tts)
         self.menubar.Append(m_speech, "&Speech")
 
         # --- 6. HELP ---
@@ -479,6 +481,57 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
         self.menubar.Append(m_help, "&Help")
 
         self.SetMenuBar(self.menubar)
+
+        # Gate feature-dependent menu items on the user's choices.
+        # A disabled feature's items are disabled (not hidden) so the
+        # layout is stable and NVDA skips them cleanly. Re-enable via
+        # Help → Personalise SpeechCraft, then relaunch.
+        self._apply_feature_gates()
+
+    def _apply_feature_gates(self):
+        """Disable menu items whose feature flag is off.
+
+        Uses the gate layer (feature_toggling) so the menu bar and the
+        wizard always agree. Only touches items that exist on ``self``
+        (create_menus may be called from contexts where some items
+        haven't been built yet, so every access is guarded).
+        """
+        from feature_flags import load_feature_flags
+        from feature_toggling import build_gates
+
+        try:
+            flags = load_feature_flags()
+            gates = build_gates(flags)
+        except Exception:
+            # Flags module or file unavailable — leave everything enabled
+            # (fail-open) rather than locking the user out of features.
+            return
+
+        def _set(item, enabled: bool) -> None:
+            if item is not None:
+                item.Enable(enabled)
+
+        # Transcription (Tools menu)
+        _set(getattr(self, "transcribe_item", None),
+             gates["local_transcription"].enabled)
+        # Line placing depends on transcription being available
+        line_placing_ok = gates["line_placing"].enabled and (
+            gates["local_transcription"].enabled or gates["cloud_transcription"].enabled
+        )
+        _set(getattr(self, "line_placer_item", None), line_placing_ok)
+
+        # Pedalboard effects (Effects menu)
+        pedalboard_on = gates["pedalboard_effects"].enabled
+        for item in getattr(self, "effects_pedalboard_items", []):
+            _set(item, pedalboard_on)
+
+        # TTS (Speech menu)
+        _set(getattr(self, "edge_tts_item", None), gates["edge_tts"].enabled)
+        _set(getattr(self, "piper_tts_item", None), gates["piper_tts"].enabled)
+
+        # Destructive edit mode (Edit menu)
+        _set(getattr(self, "edit_mode_item", None),
+             gates["destructive_editing"].enabled)
 
     def on_help_manual(self, event):
         help_path = self._get_resource_path("help/index.html")
@@ -551,13 +604,12 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
 
         completed, aborted = run_setup_wizard(parent=self)
         if completed:
-            self.SetStatusText(
-                "Personalisation saved. Restart SpeechCraft to apply all changes."
-            )
+            # Re-apply the gates so the menu reflects the new choices
+            # immediately, without a full relaunch.
+            self._apply_feature_gates()
+            self.SetStatusText("Personalisation saved. Menu updated.")
         elif aborted:
-            self.SetStatusText(
-                "Personalisation wizard closed. Partial changes were saved."
-            )
+            self.SetStatusText("Personalisation wizard closed. Partial changes were saved.")
 
     def add_item(self, menu, label, callback):
         item = menu.Append(wx.ID_ANY, label)
