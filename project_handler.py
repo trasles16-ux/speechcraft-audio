@@ -154,13 +154,22 @@ class ProjectHandler:
 
     @staticmethod
     def export_mixdown(path, track_manager, fmt="wav"):
-        """Exports the mixed audio to a file"""
+        """Exports the mixed audio to a file.
+
+        ``fmt`` is pydub's container format string. We map user-facing
+        ``"m4a"`` to pydub's ``"mp4"`` here so the caller (and the
+        Save-Audio dialog) can keep speaking in terms of the file
+        extension the user picked. Other values pass through unchanged
+        so future formats (e.g. ``"ogg"``, ``"flac"``) work without a
+        code change.
+        """
+        pydub_format = {"m4a": "mp4"}.get(fmt, fmt)
         try:
             mixed = track_manager.mix_down()
             if not mixed:
                 return False, "No audio to export."
-            
-            mixed.export(path, format=fmt)
+
+            mixed.export(path, format=pydub_format)
             return True, "Export successful."
         except Exception as e:
             return False, f"Export failed: {e}"

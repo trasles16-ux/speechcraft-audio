@@ -4,6 +4,27 @@ All notable changes to SpeechCraft Audio are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-09-14
+
+### Added
+- **m4a (AAC) audio support** in File → Open Audio and File → Export Audio. M4A is the format used by iPhone Voice Memos and many podcast tools. FFmpeg is still required; the ffmpeg-missing dialog now mentions M4A alongside MP3. `project_handler.export_mixdown` maps user-facing `"m4a"` to pydub's `"mp4"` container format.
+- **In-app auto-update**. Two seconds after SpeechCraft launches, it checks GitHub for a newer release. If one exists, an accessible prompt dialog appears with three choices: Download and install, Skip this version permanently, or Remind me next launch (the default — Enter never silently installs). If the user picks Download, the installer is streamed to `%LOCALAPPDATA%\SpeechCraft\updates\SpeechCraft-Setup-<version>.exe` with a percentage progress dialog and a live NVDA-readable status label. The download is verified against its SHA-256 digest before launching, then SpeechCraft quits and the installer runs to replace it.
+- **Help → Check for updates…** as a manual entry point to the same flow.
+- **`updater.py`** — new pure-logic module: `UpdateInfo`, `AssetInfo`, `compare_versions`, `parse_release`, `fetch_latest_release`, `download_with_progress`, `verify_asset_sha256`, `fetch_expected_sha256`, `launch_installer`. Stdlib only (`urllib.request`, `hashlib`); no new dependencies.
+- **`dialogs/update_dialog.py`** — accessible prompt dialog (Install / Skip / Remind).
+- **`dialogs/download_progress_dialog.py`** — accessible progress dialog with `wx.Gauge` + live-region status label + Cancel button.
+
+### Security
+- Every installer download is SHA-256 verified before launching. Mismatches discard the file and surface a clear error dialog. Verified via the asset's `digest` field when GitHub provides one, otherwise via a sibling `.sha256` sidecar uploaded with the release.
+
+### Changed
+- Centralised `__version__ = "1.2.0"` at the top of `audio_editor.py` (was a buried `"3.0.2"` literal in the bug-report dialog). Bump in lockstep with the NSIS installer version and the GitHub release tag.
+
+### Tests
+- 16 new tests across `tests/test_updater.py` (14 pure-logic, Linux CI) and `tests/test_dialog_smoke.py` (2 new dialog tests).
+
+## [Unreleased]
+
 ### Fixed (1.1.4)
 - **Recording dialog → "name 'sd' is not defined"** when opening File → Record with a default input device (issue #16): `dialogs/recording_dialogs.py` referenced `sd` and `np` in `RecordingDialog.toggle_monitor`'s audio callback without importing either at module level. Same class of bug as #14 and #15, but in a different file that the original fix missed. Now bound at module load via the same `safe_import` pattern used in `audio_editor.py`, with an inline `_MissingAudioModule` placeholder (mirrors `audio_editor.DummyModule`; can't reuse directly due to circular import). On genuine missing dep, the placeholder pops a friendly install-dialog instead of `NameError`. (#16)
 - Added regression test in `test_dialog_smoke.py` asserting module-level `sd`/`np` bindings in `recording_dialogs` and that opening `RecordingDialog` with `input_device_id` set does not raise on construction.

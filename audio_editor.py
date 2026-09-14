@@ -1,3 +1,7 @@
+#: SpeechCraft Studio version. Bumped in lockstep with the NSIS installer
+#: version (installer/speechcraft_setup.nsi) and with the GitHub release tag.
+__version__ = "1.2.0"
+
 import wx
 import os
 import threading
@@ -469,6 +473,7 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
         m_help.AppendSeparator()
         self.add_item(m_help, "&Report a Bug...", self.on_report_bug)
         m_help.AppendSeparator()
+        self.add_item(m_help, "&Check for updates…", self.on_check_updates)
         self.add_item(m_help, "&Switch Edition... (Core / Full)", self.on_switch_edition)
         self.menubar.Append(m_help, "&Help")
 
@@ -514,7 +519,7 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
         log_tail = read_log_tail()
         dlg = BugReportDialog(
             self,
-            app_version=__version__ if "__version__" in globals() else "3.0.2",
+            app_version=__version__,
             log_tail=log_tail,
         )
         dlg.show()
@@ -1150,7 +1155,7 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
 
     # --- FILE & EFFECTS ---
     def on_open_audio(self, event):
-        with wx.FileDialog(self, "Open Audio", wildcard="Audio (*.wav;*.mp3)|*.wav;*.mp3") as fd:
+        with wx.FileDialog(self, "Open Audio", wildcard="Audio (*.wav;*.mp3;*.m4a)|*.wav;*.mp3;*.m4a") as fd:
             if fd.ShowModal() == wx.ID_OK:
                 path = fd.GetPath()
                 # Reset before/after state for new file — original audio is now this file
@@ -1213,7 +1218,7 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
             if ffmpeg_missing:
                 wx.MessageBox(
                     f"Cannot load {os.path.basename(path)}.\n\n"
-                    "FFmpeg is required for MP3 and other non-WAV formats.\n"
+                    "FFmpeg is required for MP3, M4A, and other non-WAV formats.\n"
                     "Please install ffmpeg or use WAV files.\n\n"
                     f"Details: {err_msg}",
                     "FFmpeg Missing", wx.ICON_ERROR
@@ -2846,20 +2851,25 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
                     wx.MessageBox(data, "Error", wx.ICON_ERROR)
 
     def on_export_audio(self, event):
-        wildcard = "WAV Audio (*.wav)|*.wav|MP3 Audio (*.mp3)|*.mp3"
-        with wx.FileDialog(self, "Export Audio", defaultDir=os.path.expanduser("~/Music"), 
-                           wildcard=wildcard, 
-                           style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as fd:
-            if fd.ShowModal() == wx.ID_OK:
-                path = fd.GetPath()
-                fmt = "mp3" if path.lower().endswith(".mp3") else "wav"
-                
-                success, msg = project_handler.ProjectHandler.export_mixdown(path, self.track_manager, fmt)
-                if success:
-                     self.SetStatusText(f"Exported to {path}")
-                     wx.MessageBox(msg, "Success", wx.ICON_INFORMATION)
-                else:
-                     wx.MessageBox(msg, "Error", wx.ICON_ERROR)
+            wildcard = (
+                "WAV Audio (*.wav)|*.wav"
+                "|MP3 Audio (*.mp3)|*.mp3"
+                "|M4A Audio (*.m4a)|*.m4a"
+            )
+            with wx.FileDialog(self, "Export Audio", defaultDir=os.path.expanduser("~/Music"),
+                               wildcard=wildcard,
+                               style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as fd:
+                if fd.ShowModal() == wx.ID_OK:
+                    path = fd.GetPath()
+                    ext = os.path.splitext(path)[1].lower().lstrip(".")
+                    fmt = ext if ext in ("wav", "mp3", "m4a") else "wav"
+
+                    success, msg = project_handler.ProjectHandler.export_mixdown(path, self.track_manager, fmt)
+                    if success:
+                         self.SetStatusText(f"Exported to {path}")
+                         wx.MessageBox(msg, "Success", wx.ICON_INFORMATION)
+                    else:
+                         wx.MessageBox(msg, "Error", wx.ICON_ERROR)
 
     def on_export_presets(self, event):
         """Export custom presets to a JSON file."""
@@ -2959,8 +2969,214 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
             self._remix_audio()
             self.SetStatusText(msg)
             wx.MessageBox(msg, "Auto-Ducker Result", wx.ICON_INFORMATION)
-        
+
         dlg.Destroy()
+
+    # --- Auto-update -------------------------------------------------------
+    # Imported lazily here so the main module imports stay light. The dialog
+    # modules themselves are wx-only and live under dialogs/.
+
+    _SKIPPED_VERSIONS_KEY = "skipped_versions"
+    _AUTO_CHECK_KEY = "auto_check_updates"
+    _AUTO_CHECK_DEFAULT = True
+
+    def _load_prefs_for_update(self):
+        """Read the user prefs dict. Wrapper around onboarding_dialog._load_prefs."""
+        from onboarding_dialog import _load_prefs
+        return _load_prefs()
+
+    def _save_prefs_for_update(self, prefs):
+        """Write the user prefs dict. Wrapper around onboarding_dialog._save_prefs."""
+        from onboarding_dialog import _save_prefs
+        _save_prefs(prefs)
+
+    def _is_auto_check_enabled(self):
+        prefs = self._load_prefs_for_update()
+        return bool(prefs.get(self._AUTO_CHECK_KEY, self._AUTO_CHECK_DEFAULT))
+
+    def _is_version_skipped(self, version):
+        prefs = self._load_prefs_for_update()
+        return version in (prefs.get(self._SKIPPED_VERSIONS_KEY) or [])
+
+    def _mark_version_skipped(self, version):
+        prefs = self._load_prefs_for_update()
+        skipped = list(prefs.get(self._SKIPPED_VERSIONS_KEY, []))
+        if version not in skipped:
+            skipped.append(version)
+        prefs[self._SKIPPED_VERSIONS_KEY] = skipped
+        self._save_prefs_for_update(prefs)
+
+    def on_check_updates(self, event=None):
+        """Help -> Check for updates - manual GitHub release check."""
+        self._start_update_check(manual=True)
+
+    def schedule_launch_update_check(self):
+        """Kick off a background update check shortly after launch."""
+        if not self._is_auto_check_enabled():
+            return
+        wx.CallLater(2000, lambda: self._start_update_check(manual=False))
+
+    def _start_update_check(self, *, manual):
+        from updater import fetch_latest_release, UpdateCheckError
+        import threading
+        self.SetStatusText("Checking for updates...")
+        def _worker():
+            try:
+                info = fetch_latest_release()
+            except UpdateCheckError as exc:
+                wx.CallAfter(self._on_update_check_failed, str(exc), manual)
+                return
+            except Exception as exc:
+                wx.CallAfter(self._on_update_check_failed, f"Unexpected error: {exc}", manual)
+                return
+            wx.CallAfter(self._on_update_check_ok, info, manual)
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_update_check_ok(self, info, manual):
+        if not info.is_newer_than(__version__):
+            self.SetStatusText(f"You are up to date (v{__version__})")
+            if manual:
+                from dialogs.update_dialog import UpdatePromptDialog
+                dlg = UpdatePromptDialog(self, current_version=__version__, update_info=info)
+                try:
+                    dlg.ShowModal()
+                finally:
+                    dlg.Destroy()
+            return
+        if self._is_version_skipped(info.version):
+            self.SetStatusText(f"Skipping v{info.version} (per your preference)")
+            return
+        from dialogs.update_dialog import UpdatePromptDialog
+        dlg = UpdatePromptDialog(self, current_version=__version__, update_info=info)
+        try:
+            result = dlg.ShowModal()
+        finally:
+            dlg.Destroy()
+        if result != wx.ID_OK:
+            return
+        choice = dlg.get_choice()
+        if choice == "skip":
+            self._mark_version_skipped(info.version)
+            self.SetStatusText(f"Will not remind about v{info.version} again")
+            return
+        if choice == "remind":
+            self.SetStatusText("Will check again next launch")
+            return
+        self._run_update_download(info)
+
+    def _on_update_check_failed(self, message, manual):
+        self.SetStatusText("Update check failed")
+        if not manual:
+            return
+        wx.MessageBox(
+            f"Could not check for updates.\n\n{message}",
+            "Update Check Failed", wx.ICON_WARNING,
+        )
+
+    def _run_update_download(self, info):
+        from updater import (
+            UpdateCheckError,
+            download_with_progress,
+            fetch_expected_sha256,
+            installer_staging_path,
+            verify_asset_sha256,
+        )
+        import threading
+        installer = info.find_installer()
+        if installer is None:
+            wx.MessageBox(
+                f"Release v{info.version} has no SpeechCraft installer asset.",
+                "Update Error", wx.ICON_ERROR,
+            )
+            return
+        dest_path = installer_staging_path(info.version)
+        progress_dlg = None
+
+        def _on_main_thread(downloaded, total):
+            if progress_dlg is not None:
+                progress_dlg.update(downloaded)
+
+        def _worker():
+            from dialogs.download_progress_dialog import DownloadProgressDialog
+            nonlocal progress_dlg
+            def _show_dialog():
+                nonlocal progress_dlg
+                progress_dlg = DownloadProgressDialog(
+                    self, file_name=installer.name,
+                    total_bytes=installer.size_bytes or 1,
+                )
+                progress_dlg.Show()
+            wx.CallAfter(_show_dialog)
+            import time
+            time.sleep(0.2)
+            try:
+                download_with_progress(
+                    installer.url, dest_path,
+                    progress_cb=lambda d, t: wx.CallAfter(_on_main_thread, d, t),
+                    cancel_check=lambda: (progress_dlg.is_cancelled() if progress_dlg else False),
+                )
+            except UpdateCheckError as exc:
+                wx.CallAfter(self._on_download_failed, str(exc))
+                return
+            expected = installer.sha256
+            if expected is None:
+                expected = fetch_expected_sha256(
+                    digest_url=installer.url + ".sha256",
+                    asset_name=installer.name,
+                )
+            if expected is not None and not verify_asset_sha256(dest_path, expected):
+                try:
+                    os.unlink(dest_path)
+                except OSError:
+                    pass
+                wx.CallAfter(
+                    self._on_download_failed,
+                    "Installer checksum did not match. The download was discarded.",
+                )
+                return
+            wx.CallAfter(self._on_download_verified, dest_path, info)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_download_failed(self, message):
+        self.SetStatusText("Update download failed")
+        wx.MessageBox(
+            f"Could not download the update.\n\n{message}",
+            "Update Failed", wx.ICON_ERROR,
+        )
+
+    def _on_download_verified(self, dest_path, info):
+        from updater import launch_installer, UpdateCheckError
+        confirm = wx.MessageDialog(
+            self,
+            (
+                f"SpeechCraft {info.version} is ready to install.\n\n"
+                f"Installer: {dest_path}\n\n"
+                f"SpeechCraft will close and the installer will run. Continue?"
+            ),
+            "Ready to install update",
+            wx.YES_NO | wx.ICON_QUESTION,
+        )
+        choice = confirm.ShowModal()
+        confirm.Destroy()
+        if choice != wx.ID_YES:
+            self.SetStatusText("Update cancelled; installer still downloaded")
+            return
+        try:
+            launch_installer(dest_path)
+        except UpdateCheckError as exc:
+            wx.MessageBox(
+                f"Could not start the installer.\n\n{exc}",
+                "Update Failed", wx.ICON_ERROR,
+            )
+            return
+        self.SetStatusText(f"Installing v{info.version}...")
+        wx.CallLater(500, self._quit_for_update)
+
+    def _quit_for_update(self):
+        self.Close(force=True)
+        wx.CallLater(2000, lambda: os._exit(0))
+
 
 def main(splash=None):
     """Launch the main SpeechCraft window.
@@ -3036,6 +3252,11 @@ def main(splash=None):
     # Force a refresh before MainLoop so the window paints at least
     # one frame even on machines where MainLoop is slow to enter.
     frame.Update()
+    # Kick off a background update check shortly after launch. The
+    # dialog only appears if a newer version exists; failures are
+    # silent. Disable by setting "auto_check_updates": false in
+    # setup.json.
+    frame.schedule_launch_update_check()
     app.MainLoop()
     return 0
 

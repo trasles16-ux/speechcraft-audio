@@ -827,3 +827,52 @@ def test_extracted_dialog_constructs(wx_app: Any,
             dlg.Destroy()
     except Exception as exc:
         pytest.fail(f"{class_name}({kwargs!r}) raised: {exc!r}")
+
+
+# --- Auto-update dialog tests (v1.2.0) --------------------------------------
+
+
+@needs_wx
+def test_update_prompt_dialog_constructs(wx_app):
+    """UpdatePromptDialog must construct with an UpdateInfo and expose get_choice()."""
+    if wx_app is None:
+        pytest.skip("wxPython not installed (Linux smoke CI)")
+    from dialogs.update_dialog import UpdatePromptDialog
+    from updater import UpdateInfo
+
+    info = UpdateInfo(
+        version="1.3.0",
+        url="https://github.com/trasles16-ux/speechcraft-audio/releases/tag/v1.3.0",
+        title="SpeechCraft Studio v1.3.0",
+        notes="Bug fixes.",
+        published_at="2026-10-01T12:00:00Z",
+        is_prerelease=False,
+    )
+    dlg = UpdatePromptDialog(parent=None, current_version="1.2.0", update_info=info)
+    try:
+        # Default choice is "remind" — the safe one — so a stray Enter
+        # never silently kicks off an installer.
+        assert dlg.get_choice() == "remind"
+    finally:
+        dlg.Destroy()
+
+
+@needs_wx
+def test_download_progress_dialog_constructs(wx_app):
+    """DownloadProgressDialog must construct with a known total size."""
+    if wx_app is None:
+        pytest.skip("wxPython not installed (Linux smoke CI)")
+    from dialogs.download_progress_dialog import DownloadProgressDialog
+
+    dlg = DownloadProgressDialog(
+        parent=None, file_name="Setup.exe", total_bytes=50_000_000
+    )
+    try:
+        # Simulate progress to make sure the update path doesn't blow up.
+        dlg.update(25_000_000)
+        assert dlg.is_cancelled() is False
+        # Force the cancel flag so we can verify the polling helper works.
+        dlg._cancelled = True
+        assert dlg.is_cancelled() is True
+    finally:
+        dlg.Destroy()
