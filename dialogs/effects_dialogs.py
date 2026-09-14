@@ -109,6 +109,15 @@ class BreathSmoothingPresetDialog(wx.Dialog):
 
     def __init__(self, parent, title="Breath Smoothing"):
         super().__init__(parent, title=title)
+        # Set the dialog's accessible name explicitly. Without this,
+        # NVDA reads "dialog" instead of the title, which makes the
+        # dialog indistinguishable from any other dialog at the
+        # screen-reader navigation level. JAWS happens to fall back to
+        # the title even without SetName, which is why JAWS users
+        # could find Light but NVDA users couldn't -- the underlying
+        # bug was the same: every control in this dialog had a default
+        # wx accessible name rather than the label NVDA expects.
+        self.SetName(title)
         built_in = [k for k in config.BREATH_SMOOTHING_LEVELS if k != "Disabled"]
         custom = self._load_custom_names()
         self.preset_names = built_in + custom
@@ -131,6 +140,10 @@ class BreathSmoothingPresetDialog(wx.Dialog):
 
         # --- Strength Presets ---
         preset_box = wx.StaticBox(self, label="Strength")
+        # Give the static box an accessible name. Without this, NVDA
+        # reads "groupBox" and the Light/Medium/Heavy radios below it
+        # lack any context to be uniquely identified.
+        preset_box.SetName("Strength preset group")
         preset_sizer = wx.StaticBoxSizer(preset_box, wx.VERTICAL)
 
         self.preset_radios = {}
@@ -145,11 +158,21 @@ class BreathSmoothingPresetDialog(wx.Dialog):
                 desc = config.BREATH_SMOOTHING_LEVELS[name]["description"]
             else:
                 desc = "Custom preset — values loaded from saved settings"
+            # Set the accessible name explicitly so screen readers
+            # announce the preset name AND its description. NVDA reads
+            # the accessible name verbatim when focus arrives, so the
+            # label alone ("Light") isn't enough -- the user needs to
+            # hear what Light does. JAWS falls back to the label so it
+            # also works there.
+            radio.SetName(f"{name}. {desc}")
             radio.SetToolTip(desc)
             self.preset_radios[name] = radio
             preset_sizer.Add(radio, 0, wx.ALL, 4)
 
             desc_st = wx.StaticText(self, label=desc)
+            # The description text should announce as itself, not as
+            # "staticText". Mark it as such.
+            desc_st.SetName(f"Description for {name}: {desc}")
             desc_st.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
             desc_st.SetForegroundColour(wx.Colour(80, 80, 80))
             indent = wx.BoxSizer(wx.HORIZONTAL)
@@ -163,9 +186,18 @@ class BreathSmoothingPresetDialog(wx.Dialog):
         sens_box = wx.BoxSizer(wx.HORIZONTAL)
         sens_label = wx.StaticText(self, label="Sensitivity:")
         sens_label.SetMinSize((100, -1))
+        sens_label.SetName("Sensitivity label")
         self.sens_slider = wx.Slider(self, value=50, minValue=1, maxValue=100,
                                      style=wx.SL_HORIZONTAL | wx.SL_LABELS)
         self.sens_slider.SetToolTip("Higher = detect more breaths. Adjust until most breaths are caught without tagging normal speech.")
+        # Give the slider an accessible name. Without this, NVDA
+        # reads "slider" and the user can't tell sensitivity from
+        # effect amount without context.
+        self.sens_slider.SetName(
+            "Sensitivity slider. Higher values detect more breaths. "
+            "Adjust until most breaths are caught without tagging "
+            "normal speech."
+        )
         sens_box.Add(sens_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         sens_box.Add(self.sens_slider, 1, wx.EXPAND)
         outer.Add(sens_box, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
@@ -174,9 +206,15 @@ class BreathSmoothingPresetDialog(wx.Dialog):
         mix_box = wx.BoxSizer(wx.HORIZONTAL)
         mix_label = wx.StaticText(self, label="Effect amount:")
         mix_label.SetMinSize((100, -1))
+        mix_label.SetName("Effect amount label")
         self.mix_slider = wx.Slider(self, value=100, minValue=1, maxValue=100,
                                     style=wx.SL_HORIZONTAL | wx.SL_LABELS)
         self.mix_slider.SetToolTip("100% = full processing. Lower values blend in more of the original breath sound for a more natural result.")
+        self.mix_slider.SetName(
+            "Effect amount slider. 100 percent is full processing; "
+            "lower values blend in more original breath sound for a "
+            "more natural result."
+        )
         mix_box.Add(mix_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         mix_box.Add(self.mix_slider, 1, wx.EXPAND)
         outer.Add(mix_box, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
@@ -184,12 +222,14 @@ class BreathSmoothingPresetDialog(wx.Dialog):
         # Percentage labels under sliders
         sens_pct = wx.BoxSizer(wx.HORIZONTAL)
         self.sens_pct_st = wx.StaticText(self, label="Detects moderate breath sounds")
+        self.sens_pct_st.SetName("Sensitivity hint: detects moderate breath sounds")
         self.sens_pct_st.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_ITALIC, wx.FONTWEIGHT_NORMAL))
         sens_pct.AddSpacer(108)
         sens_pct.Add(self.sens_pct_st)
         outer.Add(sens_pct, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
 
         self.mix_pct_st = wx.StaticText(self, label="Full processing applied")
+        self.mix_pct_st.SetName("Effect amount hint: full processing applied")
         self.mix_pct_st.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_ITALIC, wx.FONTWEIGHT_NORMAL))
         mix_pct = wx.BoxSizer(wx.HORIZONTAL)
         mix_pct.AddSpacer(108)
@@ -213,6 +253,13 @@ class BreathSmoothingPresetDialog(wx.Dialog):
         manage_btn = wx.Button(self, label="Manage Custom...")
         ok_btn = wx.Button(self, wx.ID_OK)
         cancel_btn = wx.Button(self, wx.ID_CANCEL)
+        # Explicit accessible names on every button. wx assigns a
+        # default "button" name otherwise, which NVDA announces as
+        # "button" (no help). JAWS reads the label anyway.
+        save_btn.SetName("Save as Preset, saves current settings as a new custom preset")
+        manage_btn.SetName("Manage Custom, opens dialog to delete custom presets")
+        ok_btn.SetName("OK, apply breath smoothing and close dialog")
+        cancel_btn.SetName("Cancel, close dialog without applying")
         save_btn.Bind(wx.EVT_BUTTON, self._on_save_as_preset)
         manage_btn.Bind(wx.EVT_BUTTON, self._on_manage_custom)
         btn_row.AddMany([

@@ -455,6 +455,111 @@ def test_breath_dialog_constructs_and_get_values_has_required_keys(
 
 
 @needs_wx
+def test_breath_dialog_every_control_has_meaningful_accessible_name(
+    wx_app: Any,
+) -> None:
+    """Regression test for an NVDA bug: the Breath Smoothing dialog
+    exposed Light / Medium / Heavy radio buttons with default
+    accessible names ('radioButton'), so NVDA saw three identical
+    controls and skipped the first one. JAWS reads the label even
+    without SetName, which is why JAWS users could find 'Light' but
+    NVDA users couldn't.
+
+    This test asserts every interactive control in the dialog has an
+    explicit accessible name that contains its visual label (or some
+    other meaningful text). It walks the dialog tree and checks every
+    RadioButton, Slider, Button, and StaticText with non-empty label.
+    """
+    import wx  # used here for type checks; only imported when wx is available
+    from dialogs.effects_dialogs import BreathSmoothingPresetDialog
+
+    dlg = BreathSmoothingPresetDialog(None)
+    try:
+        # The dialog itself: name should be the title, not 'dialog'.
+        assert dlg.GetName() == "Breath Smoothing", (
+            f"dialog accessible name is {dlg.GetName()!r}, expected 'Breath Smoothing'"
+        )
+
+        # Walk every control and check that interactive widgets have
+        # meaningful names (not the wx defaults).
+        def walk(widget):
+            yield widget
+            for child in widget.GetChildren():
+                yield from walk(child)
+
+        # Defaults wx assigns when SetName() is not called
+        bad_defaults = {"dialog", "staticText", "radioButton", "button", "slider", "groupBox"}
+        interactive_types = (wx.RadioButton, wx.Slider, wx.Button)
+
+        problems = []
+        for widget in walk(dlg):
+            cls = type(widget).__name__
+            name = widget.GetName()
+            # Get the visible label (StaticText, Button, RadioButton all
+            # implement GetLabel; Sliders don't but their tooltip holds the description).
+            try:
+                label = widget.GetLabel()
+            except Exception:
+                label = ""
+            if isinstance(widget, interactive_types):
+                # Interactive control: must have a meaningful name.
+                if name in bad_defaults:
+                    problems.append(
+                        f"{cls} label={label!r:30}  name={name!r}  (default; needs SetName)"
+                    )
+                # And the name must contain the visible label (or close
+                # to it) so the screen reader announces it. Strip
+                # trailing punctuation for comparison -- button labels
+                # often end in "..." but accessible names use "," etc.
+                if label:
+                    label_clean = label.rstrip(".…").rstrip()
+                    if label_clean and label_clean not in name:
+                        problems.append(
+                            f"{cls} label={label!r:30}  name={name!r}  (name doesn't mention label)"
+                        )
+            elif isinstance(widget, wx.StaticText) and label:
+                # Static text with visible content should announce that
+                # content (not the default 'staticText').
+                if name in bad_defaults:
+                    problems.append(
+                        f"StaticText label={label[:40]!r}  name={name!r}  (default)"
+                    )
+        assert not problems, "Accessibility problems found:\n  " + "\n  ".join(problems)
+    finally:
+        dlg.Destroy()
+
+
+@needs_wx
+def test_breath_dialog_each_preset_radio_has_distinct_accessible_name(
+    wx_app: Any,
+) -> None:
+    """Direct test for the user-visible bug: Light, Medium, Heavy
+    must each have a unique accessible name containing its label, so
+    NVDA (and any screen reader) can find each one independently."""
+    from dialogs.effects_dialogs import BreathSmoothingPresetDialog
+
+    dlg = BreathSmoothingPresetDialog(None)
+    try:
+        names = []
+        for name, radio in dlg.preset_radios.items():
+            accessible = radio.GetName()
+            assert accessible != "radioButton", (
+                f"{name} radio has default accessible name; NVDA can't find it"
+            )
+            assert name in accessible, (
+                f"{name} radio accessible name {accessible!r} should contain the label"
+            )
+            names.append(accessible)
+        # All radios must have distinct accessible names (otherwise NVDA
+        # may collapse them into one entry).
+        assert len(set(names)) == len(names), (
+            f"Radio accessible names must be unique; got {names}"
+        )
+    finally:
+        dlg.Destroy()
+
+
+@needs_wx
 def test_breath_dialog_get_values_rms_thresh_inversely_proportional_to_sens(
     wx_app: Any,
 ) -> None:
