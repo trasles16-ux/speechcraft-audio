@@ -1,3 +1,7 @@
+#: SpeechCraft Studio version. Bumped in lockstep with the NSIS installer
+#: version (installer/speechcraft_setup.nsi) and with the GitHub release tag.
+__version__ = "1.2.0"
+
 import wx
 import os
 import threading
@@ -514,7 +518,7 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
         log_tail = read_log_tail()
         dlg = BugReportDialog(
             self,
-            app_version=__version__ if "__version__" in globals() else "3.0.2",
+            app_version=__version__,
             log_tail=log_tail,
         )
         dlg.show()
