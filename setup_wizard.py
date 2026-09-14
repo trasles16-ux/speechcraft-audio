@@ -24,7 +24,7 @@ Architecture (mirrors Quill's split, see quill/ui/setup_wizard.py):
   subclass with a ``collect()`` method that returns a
   :class:`FeatureFlags`
 - :class:`SetupWizardDialog` — the modal wx.Dialog that hosts the
-  five pages, wires Next/Back/Finish, and writes setup.json
+  six pages, wires Next/Back/Finish, and writes setup.json
 - :func:`run_setup_wizard` — module-level entry point, opens the
   dialog and returns ``(completed, aborted)``
 
@@ -57,6 +57,7 @@ from feature_flags import (
 from prefs import PREFS_FILE
 from setup_wizard_pages import (
     DataLocationPage,
+    DownloadPage,
     EditingFeaturesPage,
     SummaryPage,
     TTSEnginesPage,
@@ -68,7 +69,7 @@ _WIZARD_TITLE = "Personalise SpeechCraft"
 
 
 class SetupWizardDialog(wx.Dialog):
-    """The 5-page wizard as a modal wx.Dialog.
+    """The 6-page wizard as a modal wx.Dialog.
 
     Uses wx.Notebook under the hood — pages are tabs the user
     navigates with the Next/Back buttons at the bottom. The
@@ -129,6 +130,11 @@ class SetupWizardDialog(wx.Dialog):
         self._welcome = WelcomePage(self._notebook)
         self._editing = EditingFeaturesPage(self._notebook, flags=self._flags)
         self._tts = TTSEnginesPage(self._notebook, flags=self._flags)
+        self._download = DownloadPage(
+            self._notebook,
+            flags=self._flags,
+            state_file=self._prefs_file,
+        )
         self._data = DataLocationPage(
             self._notebook,
             settings_dir=self._prefs_file.parent,
@@ -140,6 +146,7 @@ class SetupWizardDialog(wx.Dialog):
             (self._welcome, "Welcome"),
             (self._editing, "Editing features"),
             (self._tts, "TTS engines"),
+            (self._download, "Download ready"),
             (self._data, "Data location"),
             (self._summary, "Summary"),
         ]:
