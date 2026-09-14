@@ -530,6 +530,58 @@ def test_breath_dialog_every_control_has_meaningful_accessible_name(
 
 
 @needs_wx
+def test_breath_dialog_radio_preset_is_mutually_exclusive_group(
+    wx_app: Any,
+) -> None:
+    """Regression test for a real NVDA bug: the Strength radios were
+    created with RB_GROUP on 'Medium' instead of the first radio
+    ('Light'). That split them into two Windows radio groups --
+    Light in its own group, Medium+Heavy in another. NVDA walks
+    radio groups, and its standard radio-navigation (arrow keys,
+    browse-mode 'r' key) only steps within the currently-focused
+    group. Because the dialog opens with Medium selected, focus
+    lands in the Medium+Heavy group, and Light (the other group)
+    is unreachable through normal radio navigation. JAWS matches
+    by label and could still find Light, which is why the bug
+    only showed up for NVDA users.
+
+    The fix puts RB_GROUP on the first radio so all three are in
+    one group. This test asserts the radios are mutually exclusive:
+    selecting any one deselects the others.
+    """
+    from dialogs.effects_dialogs import BreathSmoothingPresetDialog
+
+    dlg = BreathSmoothingPresetDialog(None)
+    try:
+        # Default: Medium selected
+        assert dlg.preset_radios["Medium"].GetValue()
+        assert not dlg.preset_radios["Light"].GetValue()
+        assert not dlg.preset_radios["Heavy"].GetValue()
+
+        # Select Light -> Medium must deselect
+        dlg.preset_radios["Light"].SetValue(True)
+        assert dlg.preset_radios["Light"].GetValue()
+        assert not dlg.preset_radios["Medium"].GetValue(), (
+            "Light and Medium are in separate radio groups; "
+            "selecting Light did not deselect Medium. "
+            "Check that RB_GROUP is on the FIRST radio."
+        )
+        assert not dlg.preset_radios["Heavy"].GetValue()
+
+        # Select Medium -> Light must deselect
+        dlg.preset_radios["Medium"].SetValue(True)
+        assert not dlg.preset_radios["Light"].GetValue()
+        assert dlg.preset_radios["Medium"].GetValue()
+
+        # Select Heavy -> Medium must deselect
+        dlg.preset_radios["Heavy"].SetValue(True)
+        assert not dlg.preset_radios["Medium"].GetValue()
+        assert dlg.preset_radios["Heavy"].GetValue()
+    finally:
+        dlg.Destroy()
+
+
+@needs_wx
 def test_breath_dialog_each_preset_radio_has_distinct_accessible_name(
     wx_app: Any,
 ) -> None:
@@ -853,6 +905,47 @@ def test_eq_dialog_get_preset_name_returns_string(wx_app: Any) -> None:
         name = dlg.get_preset_name()
         assert isinstance(name, str)
         assert len(name) > 0
+    finally:
+        dlg.Destroy()
+
+
+@needs_wx
+def test_eq_dialog_values_round_trip_through_equalizer(wx_app: Any) -> None:
+    """Regression test for a user-visible crash: selecting an EQ
+    preset and clicking OK raised
+    ``ValueError: cannot unpack non-iterable int object``.
+
+    Root cause: EQPresetDialog.get_values() returns a dict
+    ``{freq_hz: gain_db}``, but audio_effects.Equalizer.apply_to_numpy
+    expected a list of (freq, gain) tuples and did
+    ``for freq, gain in self.bands``. Iterating a dict yields its
+    keys (ints), so unpacking ``freq, gain = 100`` raised.
+
+    The fix normalises the dict to a list of tuples in
+    Equalizer.__init__. This test exercises the full path:
+    dialog.get_values() -> Equalizer(bands=...) -> apply_to_numpy.
+    """
+    import numpy as np
+    from dialogs.effects_dialogs import EQPresetDialog
+    import audio_effects
+
+    dlg = EQPresetDialog(None)
+    try:
+        values = dlg.get_values()
+        assert isinstance(values, dict), (
+            "get_values() should return a dict for the Equalizer"
+        )
+        # Exercise the exact call the audio editor makes on OK.
+        eff = audio_effects.Equalizer(bands=values)
+        # apply_to_numpy is where the old crash lived.
+        samples = np.zeros(44100, dtype=np.float32)
+        out = eff.apply_to_numpy(samples, 44100)
+        assert out.shape == samples.shape
+        # Also verify the list-of-tuples shape still works (config.py uses it)
+        tuple_bands = list(values.items())
+        eff2 = audio_effects.Equalizer(bands=tuple_bands)
+        out2 = eff2.apply_to_numpy(samples, 44100)
+        assert out2.shape == samples.shape
     finally:
         dlg.Destroy()
 

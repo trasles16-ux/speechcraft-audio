@@ -171,11 +171,20 @@ class BreathSmoothingPresetDialog(wx.Dialog):
         preset_sizer = wx.StaticBoxSizer(preset_box, wx.VERTICAL)
 
         self.preset_radios = {}
-        for name in self.preset_names:
-            if name == "Medium":
-                style = wx.RB_GROUP
-            else:
-                style = 0
+        # wx.RadioButton style: RB_GROUP marks the *start* of a new radio
+        # group. All radios without RB_GROUP join the most recent group.
+        # So the FIRST radio gets RB_GROUP, the rest get 0.
+        #
+        # Previously RB_GROUP was on "Medium" (intended as the default
+        # selection). That created two groups: Light in group 1,
+        # Medium+Heavy in group 2. NVDA walks radio groups — it sees
+        # the "Strength" group as two separate objects and its radio-
+        # arrow navigation only steps within one group, so Light was
+        # unreachable via the standard radio pattern. JAWS matched by
+        # label so Paul could still find it. Fix: put RB_GROUP on the
+        # first radio (Light) so all three form one group.
+        for i, name in enumerate(self.preset_names):
+            style = wx.RB_GROUP if i == 0 else 0
             radio = wx.RadioButton(self, label=name, style=style)
             # Built-in presets have descriptions; custom presets show a generic note
             if name in config.BREATH_SMOOTHING_LEVELS:
