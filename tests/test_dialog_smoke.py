@@ -832,6 +832,7 @@ def test_extracted_dialog_constructs(wx_app: Any,
 # --- Auto-update dialog tests (v1.2.0) --------------------------------------
 
 
+@needs_wx
 def test_update_prompt_dialog_constructs(wx_app):
     """UpdatePromptDialog must construct with an UpdateInfo and expose get_choice()."""
     if wx_app is None:
@@ -856,6 +857,7 @@ def test_update_prompt_dialog_constructs(wx_app):
         dlg.Destroy()
 
 
+@needs_wx
 def test_download_progress_dialog_constructs(wx_app):
     """DownloadProgressDialog must construct with a known total size."""
     if wx_app is None:
