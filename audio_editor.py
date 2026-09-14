@@ -1154,7 +1154,7 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
 
     # --- FILE & EFFECTS ---
     def on_open_audio(self, event):
-        with wx.FileDialog(self, "Open Audio", wildcard="Audio (*.wav;*.mp3)|*.wav;*.mp3") as fd:
+        with wx.FileDialog(self, "Open Audio", wildcard="Audio (*.wav;*.mp3;*.m4a)|*.wav;*.mp3;*.m4a") as fd:
             if fd.ShowModal() == wx.ID_OK:
                 path = fd.GetPath()
                 # Reset before/after state for new file — original audio is now this file
@@ -1217,7 +1217,7 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
             if ffmpeg_missing:
                 wx.MessageBox(
                     f"Cannot load {os.path.basename(path)}.\n\n"
-                    "FFmpeg is required for MP3 and other non-WAV formats.\n"
+                    "FFmpeg is required for MP3, M4A, and other non-WAV formats.\n"
                     "Please install ffmpeg or use WAV files.\n\n"
                     f"Details: {err_msg}",
                     "FFmpeg Missing", wx.ICON_ERROR
