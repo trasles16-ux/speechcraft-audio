@@ -14,6 +14,10 @@ Why a module instead of just reading the JSON dict inline?
 - Type-safe accessor pattern: ``flags.pedalboard_effects`` instead of
   ``flags_dict["pedalboard_effects"]`` everywhere
 
+Read/write helpers are shared via :mod:`prefs` (used by
+``onboarding_dialog``, ``audio_editor``'s auto-update wrappers, and
+future ``feature_manager``). This module is just the schema + API.
+
 Lifecycle:
 - First launch -> defaults (everything on)
 - Help -> Personalise SpeechCraft... reopens the wizard (v1.3.0+)
@@ -27,12 +31,13 @@ See docs/plans/2026-09-14-v1.3.0-roadmap.md for the broader v1.3.0 story.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any, Final
+
+from prefs import load_prefs, save_prefs
 
 
 # --- Paths ------------------------------------------------------------------
@@ -146,34 +151,6 @@ class FeatureFlags:
 # --- Read / write -----------------------------------------------------------
 
 
-def _load_prefs_file(prefs_file: Path) -> dict[str, Any]:
-    """Read setup.json and return its dict. Empty / missing / corrupt ->
-    ``{}``. Never raises - a broken prefs file should not lock the user
-    out of SpeechCraft.
-
-    Pulled out as a helper so :func:`set_feature_flag` can reuse it
-    without duplicating the "be permissive" logic.
-    """
-    if not prefs_file.exists():
-        return {}
-    try:
-        return json.loads(prefs_file.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-
-
-def _save_prefs_file(prefs_file: Path, prefs: dict[str, Any]) -> None:
-    """Persist prefs to disk. Best-effort; no error dialog.
-
-    Mirrors onboarding_dialog._save_prefs: silent on permission errors
-    so a read-only filesystem just means we re-prompt next launch.
-    """
-    try:
-        prefs_file.parent.mkdir(parents=True, exist_ok=True)
-        prefs_file.write_text(json.dumps(prefs, indent=2), encoding="utf-8")
-    except OSError:
-        pass
-
 
 def _coerce_flag(name: str, raw: Any) -> bool:
     """Return a bool flag value, falling back to the default if ``raw``
@@ -202,7 +179,7 @@ def load_feature_flags(*, prefs_file: Path | None = None) -> FeatureFlags:
     every other module can rely on.
     """
     target = prefs_file if prefs_file is not None else PREFS_FILE
-    prefs = _load_prefs_file(target)
+    prefs = load_prefs(prefs_file=target)
     raw_features = prefs.get(_FEATURES_KEY) or {}
     if not isinstance(raw_features, dict):
         raw_features = {}
@@ -223,9 +200,9 @@ def save_feature_flags(
     is replaced.
     """
     target = prefs_file if prefs_file is not None else PREFS_FILE
-    prefs = _load_prefs_file(target)
+    prefs = load_prefs(prefs_file=target)
     prefs[_FEATURES_KEY] = flags.as_dict()
-    _save_prefs_file(target, prefs)
+    save_prefs(prefs_file=target, prefs=prefs)
 
 
 def set_feature_flag(
@@ -251,13 +228,13 @@ def set_feature_flag(
         )
 
     target = prefs_file if prefs_file is not None else PREFS_FILE
-    prefs = _load_prefs_file(target)
+    prefs = load_prefs(prefs_file=target)
     features = prefs.get(_FEATURES_KEY)
     if not isinstance(features, dict):
         features = {}
     features[name] = bool(value)
     prefs[_FEATURES_KEY] = features
-    _save_prefs_file(target, prefs)
+    save_prefs(prefs_file=target, prefs=prefs)
     return bool(value)
 
 
@@ -273,9 +250,9 @@ def mark_wizard_completed(*, prefs_file: Path | None = None) -> None:
     menu (no).
     """
     target = prefs_file if prefs_file is not None else PREFS_FILE
-    prefs = _load_prefs_file(target)
+    prefs = load_prefs(prefs_file=target)
     prefs[_WIZARD_COMPLETED_KEY] = True
-    _save_prefs_file(target, prefs)
+    save_prefs(prefs_file=target, prefs=prefs)
 
 
 def is_wizard_completed(*, prefs_file: Path | None = None) -> bool:
@@ -285,7 +262,7 @@ def is_wizard_completed(*, prefs_file: Path | None = None) -> bool:
     the schema key in one place.
     """
     target = prefs_file if prefs_file is not None else PREFS_FILE
-    prefs = _load_prefs_file(target)
+    prefs = load_prefs(prefs_file=target)
     return bool(prefs.get(_WIZARD_COMPLETED_KEY, False))
 
 

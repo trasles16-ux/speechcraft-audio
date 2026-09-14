@@ -13,53 +13,27 @@ Lifecycle:
 - User picks a bundle type ("Use Core" / "Use Full") and clicks OK
 - We write the choice to ~/.speechcraft/setup.json
 - Run the chosen bundle
+
+The actual read/write of ``setup.json`` lives in :mod:`prefs` (shared
+with :mod:`feature_flags` and the auto-update wrappers in
+``audio_editor``). The ``_load_prefs`` / ``_save_prefs`` aliases
+below are kept for backward compatibility with existing tests and
+callers - new code should import from :mod:`prefs` directly.
 """
 
 from __future__ import annotations
 
-import json
-import os
-import sys
-from pathlib import Path
-from typing import Any
-
 import wx
 
-# Where we store user preferences. %APPDATA% on Windows, ~/.speechcraft
-# on Linux/macOS dev runs.
-if sys.platform == "win32":
-    PREFS_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / "SpeechCraft"
-else:
-    PREFS_DIR = Path.home() / ".speechcraft"
-
-PREFS_FILE = PREFS_DIR / "setup.json"
-
-
-def _load_prefs(prefs_file: Path | None = None) -> dict[str, Any]:
-    """Read existing prefs (if any). Returns {} on any parse error.
-
-    Prefs_path override exists so tests can redirect to a temp file.
-    Production code uses the module-level PREFS_FILE.
-    """
-    target = prefs_file if prefs_file is not None else PREFS_FILE
-    if not target.exists():
-        return {}
-    try:
-        return json.loads(target.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-
-
-def _save_prefs(prefs: dict[str, Any], prefs_file: Path | None = None) -> None:
-    """Persist prefs to disk. Best-effort; no error dialog."""
-    target = prefs_file if prefs_file is not None else PREFS_FILE
-    try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(prefs, indent=2), encoding="utf-8")
-    except OSError:
-        # Read-only filesystem, no permissions. Not fatal — we just
-        # re-prompt next launch.
-        pass
+# Re-export the canonical prefs helpers so callers that already import
+# from this module keep working. New code should ``from prefs import
+# load_prefs, save_prefs`` directly.
+from prefs import (  # noqa: F401  (re-export)
+    PREFS_DIR,
+    PREFS_FILE,
+    load_prefs as _load_prefs,
+    save_prefs as _save_prefs,
+)
 
 
 def get_preferred_bundle() -> str | None:
