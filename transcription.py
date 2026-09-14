@@ -406,11 +406,48 @@ class TranscriptionEngine:
         return transcript, alignment
 
 
+# ── Local model resolution (feature_manager integration) ──────────────────────
+
+#: Maps a faster-whisper model_size string to the feature_manager asset
+#: name that holds it. Only tiny/base are in the registry today.
+_WHISPER_ASSET_BY_SIZE = {"tiny": "tiny.en", "base": "base.en"}
+
+
+def _resolve_local_whisper_model(model_size: str) -> Optional[str]:
+    """Return the local model dir if feature_manager installed it.
+
+    Returns a path string that WhisperModel can load directly, or None
+    (fall back to faster-whisper's built-in lookup). Never raises — a
+    missing/failed local install must not block transcription.
+    """
+    try:
+        import feature_manager
+    except ImportError:
+        return None
+
+    asset = _WHISPER_ASSET_BY_SIZE.get(model_size)
+    if asset is None:
+        return None
+    try:
+        if feature_manager.is_ready("local_transcription", asset):
+            # model.bin lives at dest_dir/local_transcription/<asset>/model.bin
+            state = feature_manager.load_feature_state()
+            entry = state.get(f"local_transcription/{asset}", {})
+            model_bin = entry.get("paths", {}).get("model.bin")
+            if model_bin and os.path.exists(model_bin):
+                return os.path.dirname(model_bin)
+    except Exception:
+        return None
+    return None
+
+
 class FasterWhisperTranscriber(TranscriptionEngine):
     """Local Whisper-based transcription using Faster Whisper.
     
-    Runs entirely offline. Supports SA English accents.
-    Caches the model in ~/.cache/huggingface/ after first run.
+    Runs entirely offline. If a matching model has been installed by
+    feature_manager, it is loaded from the local dest dir (offline, no
+    Hugging Face download). Otherwise falls back to faster-whisper's
+    own model lookup by name.
     
     Args:
         model_size:  "tiny", "base", "small", "medium", or "large".
@@ -446,10 +483,11 @@ class FasterWhisperTranscriber(TranscriptionEngine):
             with self._init_lock:
                 if self._model is None:
                     compute = "float16" if self.device == "cuda" else "int8"
+                    model_path = _resolve_local_whisper_model(self.model_size)
                     self._model = WhisperModel(
-                        self.model_size,
+                        model_path if model_path else self.model_size,
                         device=self.device,
-                        compute_type=compute
+                        compute_type=compute,
                     )
         return self._model
     
