@@ -20,12 +20,12 @@ InstallDir "$PROGRAMFILES64\SpeechCraft Studio"
 InstallDirRegKey HKLM "Software\SpeechCraft\Studio" "InstallDir"
 SetCompressor /SOLID lzma
 SetOverwrite on
-VIProductVersion "1.2.0.0"
+VIProductVersion "1.3.0.0"
 VIAddVersionKey "ProductName" "SpeechCraft Studio"
 VIAddVersionKey "CompanyName" "Tracy Smith Consulting"
 VIAddVersionKey "LegalCopyright" "Tracy Smith 2026 (MIT)"
 VIAddVersionKey "FileDescription" "Accessible Audio Editor"
-VIAddVersionKey "FileVersion" "1.2.0"
+VIAddVersionKey "FileVersion" "1.3.0"
 
 Name "SpeechCraft Studio"
 

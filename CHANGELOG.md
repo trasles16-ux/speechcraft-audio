@@ -4,6 +4,22 @@ All notable changes to SpeechCraft Audio are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-09-14
+
+### Added
+- **Modular setup wizard** (`setup_wizard.py` + `setup_wizard_pages.py`). Five pages: Welcome → Editing features → TTS engines → Data location → Summary. Replaces the v1.2.0 Core/Full onboarding dialog with a per-feature choice story. Each toggleable feature has a checkbox plus a one-line description; the Summary page lists every flag and its current state before the user clicks Finish.
+- **Help → Personalise SpeechCraft…** menu item. Re-runnable any time; lets the user toggle any feature on or off and persist the choice to `setup.json`.
+- **`feature_flags.py`** — pure-logic module with the data layer for every v1.3.0 PR. Exposes a frozen `FeatureFlags` dataclass (8 fields), `load_feature_flags`, `save_feature_flags`, `set_feature_flag`, plus `mark_wizard_completed` / `is_wizard_completed`. Permissive read: missing/empty/corrupt `setup.json` returns defaults, never raises. Unknown feature name in `set_feature_flag` raises `KeyError` (typos fail loud).
+- **`prefs.py`** — shared read/write of `~/.speechcraft/setup.json`. Single source of truth for the prefs file path; `onboarding_dialog` and the auto-update wrappers in `audio_editor` now use it. Onboarding/auto-update/feature_flags all preserve each other's top-level keys via read-modify-write.
+
+### Changed
+- First-launch onboarding now uses the wizard (auto-shows when `wizard_completed=False`). The v1.2.0 `OnboardingDialog` and its `Core` / `Full` choice are removed.
+- Help menu: **Switch Edition (Core / Full)** is gone; **Personalise SpeechCraft…** replaces it.
+
+### Tests
+- 30 new tests: `tests/test_feature_flags.py` (20 pure-logic), `tests/test_prefs.py` (10 pure-logic), `tests/test_setup_wizard.py` (16 — 6 pure-logic, 10 wx-dependent).
+- Total: **186 passing**.
+
 ## [1.2.0] — 2026-09-14
 
 ### Added

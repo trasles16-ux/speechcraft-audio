@@ -1,6 +1,6 @@
 #: SpeechCraft Studio version. Bumped in lockstep with the NSIS installer
 #: version (installer/speechcraft_setup.nsi) and with the GitHub release tag.
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 import wx
 import os
@@ -474,7 +474,8 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
         self.add_item(m_help, "&Report a Bug...", self.on_report_bug)
         m_help.AppendSeparator()
         self.add_item(m_help, "&Check for updates…", self.on_check_updates)
-        self.add_item(m_help, "&Switch Edition... (Core / Full)", self.on_switch_edition)
+        m_help.AppendSeparator()
+        self.add_item(m_help, "&Personalise SpeechCraft…", self.on_personalise_speechcraft)
         self.menubar.Append(m_help, "&Help")
 
         self.SetMenuBar(self.menubar)
@@ -524,38 +525,39 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
         )
         dlg.show()
 
-    def on_switch_edition(self, event):
-        """Allow user to switch between Core and Full edition.
+    def on_personalise_speechcraft(self, event):
+        """Open the Personalise SpeechCraft setup wizard.
 
-        Shows the onboarding dialog so the user can pick a different
-        edition. Writes the choice to prefs and prompts the user to
-        restart the app.
+        Re-runnable from the Help menu. Lets the user toggle any
+        feature on or off, persist changes to setup.json, and
+        re-evaluate feature-dependent menus / code paths.
+
+        What v1.3.0-wizard-shell does: opens the wizard, persists
+        choices, marks wizard_completed=True on Finish.
+
+        What v1.3.0-feature-manager will add: when the user enables
+        something not installed, trigger a SHA-verified download
+        (same plumbing as the auto-updater from v1.2.0).
         """
         try:
-            from onboarding_dialog import OnboardingDialog, _load_prefs, _save_prefs
+            from setup_wizard import run_setup_wizard
         except ImportError as e:
             wx.MessageBox(
-                f"Could not load the edition-switcher:\n\n{e}",
-                "Switch Edition",
+                f"Could not load the Personalise SpeechCraft wizard:\n\n{e}",
+                "Personalise SpeechCraft",
                 wx.OK | wx.ICON_ERROR,
             )
             return
 
-        dlg = OnboardingDialog(self)
-        try:
-            if dlg.ShowModal() == wx.ID_OK:
-                choice = dlg.get_choice()
-                prefs = _load_prefs()
-                prefs["preferred_bundle"] = choice
-                _save_prefs(prefs)
-                wx.MessageBox(
-                    f"You've selected the {choice} edition.\n"
-                    "Please restart SpeechCraft Studio to apply the change.",
-                    "Switch Edition",
-                    wx.OK | wx.ICON_INFORMATION,
-                )
-        finally:
-            dlg.Destroy()
+        completed, aborted = run_setup_wizard(parent=self)
+        if completed:
+            self.SetStatusText(
+                "Personalisation saved. Restart SpeechCraft to apply all changes."
+            )
+        elif aborted:
+            self.SetStatusText(
+                "Personalisation wizard closed. Partial changes were saved."
+            )
 
     def add_item(self, menu, label, callback):
         item = menu.Append(wx.ID_ANY, label)
