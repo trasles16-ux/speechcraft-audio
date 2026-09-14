@@ -2850,20 +2850,25 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
                     wx.MessageBox(data, "Error", wx.ICON_ERROR)
 
     def on_export_audio(self, event):
-        wildcard = "WAV Audio (*.wav)|*.wav|MP3 Audio (*.mp3)|*.mp3"
-        with wx.FileDialog(self, "Export Audio", defaultDir=os.path.expanduser("~/Music"), 
-                           wildcard=wildcard, 
-                           style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as fd:
-            if fd.ShowModal() == wx.ID_OK:
-                path = fd.GetPath()
-                fmt = "mp3" if path.lower().endswith(".mp3") else "wav"
-                
-                success, msg = project_handler.ProjectHandler.export_mixdown(path, self.track_manager, fmt)
-                if success:
-                     self.SetStatusText(f"Exported to {path}")
-                     wx.MessageBox(msg, "Success", wx.ICON_INFORMATION)
-                else:
-                     wx.MessageBox(msg, "Error", wx.ICON_ERROR)
+            wildcard = (
+                "WAV Audio (*.wav)|*.wav"
+                "|MP3 Audio (*.mp3)|*.mp3"
+                "|M4A Audio (*.m4a)|*.m4a"
+            )
+            with wx.FileDialog(self, "Export Audio", defaultDir=os.path.expanduser("~/Music"),
+                               wildcard=wildcard,
+                               style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as fd:
+                if fd.ShowModal() == wx.ID_OK:
+                    path = fd.GetPath()
+                    ext = os.path.splitext(path)[1].lower().lstrip(".")
+                    fmt = ext if ext in ("wav", "mp3", "m4a") else "wav"
+
+                    success, msg = project_handler.ProjectHandler.export_mixdown(path, self.track_manager, fmt)
+                    if success:
+                         self.SetStatusText(f"Exported to {path}")
+                         wx.MessageBox(msg, "Success", wx.ICON_INFORMATION)
+                    else:
+                         wx.MessageBox(msg, "Error", wx.ICON_ERROR)
 
     def on_export_presets(self, event):
         """Export custom presets to a JSON file."""
