@@ -49,22 +49,26 @@ def launch_speechcraft() -> int:
 
     print("Starting SpeechCraft...")
 
-    # Onboarding: pick bundle (Core / Full) on first run, persist for
-    # later launches. Runs before the splash so the user's choice is
-    # available to audio_editor for menu hide/show rules.
+    # Personalise SpeechCraft wizard: shown automatically on first
+    # launch (wizard_completed=False), skipped on later launches.
+    # Re-openable from Help -> Personalise SpeechCraft any time.
+    #
+    # Replaces the v1.2.0 Core/Full onboarding dialog. The new
+    # wizard gives the user per-feature choices (which is a richer
+    # story than the binary Core/Full choice).
     try:
-        from onboarding_dialog import get_preferred_bundle
-        choice = get_preferred_bundle()
-        if choice is None:
-            from onboarding_dialog import run_onboarding
-            choice = run_onboarding()
-        if choice:
-            print(f"[OK] User picked bundle: {choice}")
+        from setup_wizard import should_show_wizard_on_launch, run_setup_wizard
+        if should_show_wizard_on_launch():
+            completed, aborted = run_setup_wizard()
+            if completed:
+                print("[OK] Personalise SpeechCraft completed")
+            elif aborted:
+                print("[INFO] Personalise SpeechCraft cancelled")
     except Exception:
-        # If onboarding fails for any reason (no display, wx missing,
-        # etc.) we silently proceed with whatever the previous run left
-        # or fall back to Core. The bug-report dialog handles real
-        # crashes later.
+        # If the wizard fails for any reason (no display, wx missing,
+        # import error, etc.) we silently proceed. The user can still
+        # open the wizard from Help -> Personalise SpeechCraft later.
+        # Defaults are loaded from setup.json; missing file -> defaults.
         pass
 
     # Splash is shown BEFORE the rest of the launch sequence so the

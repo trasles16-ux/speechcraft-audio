@@ -1145,6 +1145,55 @@ def test_recording_dialog_update_level_changes_label(wx_app: Any) -> None:
         dlg.Destroy()
 
 
+@needs_wx
+def test_recording_dialog_toggle_monitor_noop_after_destroy(wx_app: Any) -> None:
+    """Regression test: an orphaned wx.CallAfter(toggle_monitor) callback
+    that fires after the dialog was destroyed must be a safe no-op, not a
+    Windows fatal exception.
+
+    Scenario: RecordingDialog.__init__ with input_device_id set schedules
+    ``wx.CallAfter(self.toggle_monitor, None)``. If the dialog is
+    destroyed before that deferred call runs (as tests and fast-abort
+    flows do), the orphaned callback would previously touch dead widgets
+    and wx.MessageBox, triggering COM error 0x8001010d on Windows.
+
+    We simulate the orphaned callback by calling toggle_monitor(None)
+    directly on a destroyed dialog and asserting it returns without
+    touching any widget.
+    """
+    from dialogs.recording_dialogs import RecordingDialog
+
+    dlg = RecordingDialog(None, input_device_id=99999)
+    dlg.Destroy()
+    # The orphaned callback path — must be a clean no-op.
+    dlg.toggle_monitor(None)
+    # No exception, no monitor stream started on a dead dialog.
+    assert dlg.monitor_stream is None
+
+
+@needs_wx
+def test_studio_recording_dialog_update_ui_noop_after_destroy(wx_app: Any) -> None:
+    """Regression test: StudioRecordingDialog._update_ui is a safe no-op
+    after the dialog was destroyed.
+
+    _update_ui is invoked via wx.CallAfter from the transcription worker
+    thread. If the dialog is closed before the worker's final progress
+    update fires, the orphaned callback would touch dead widgets.
+    """
+    from dialogs.recording_dialogs import StudioRecordingDialog
+
+    dlg = StudioRecordingDialog(
+        None,
+        script_lines=["line 1", "line 2"],
+        input_device_id=None,
+    )
+    dlg.Destroy()
+    # Simulate an orphaned worker-thread progress callback.
+    progress = {"progress_percent": 50, "current_line": 1, "total_lines": 2, "completed_lines": 0}
+    dlg._update_ui(progress, "line 1 transcript", "line 1")
+    # No exception; widgets are dead, so nothing observable changes.
+
+
 # ---------------------------------------------------------------------------
 # StudioRecordingDialog
 # ---------------------------------------------------------------------------

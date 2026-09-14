@@ -161,6 +161,15 @@ class RecordingDialog(wx.Dialog):
             wx.CallAfter(self.toggle_monitor, None)
             
     def toggle_monitor(self, event):
+        # Guard against an orphaned wx.CallAfter callback firing after the
+        # dialog was destroyed (e.g. a test destroys the dialog before the
+        # auto-start CallAfter queued in __init__ gets a chance to run).
+        # Without this, the call would touch dead widgets / wx.MessageBox
+        # and can trigger a Windows fatal exception (0x8001010d) via COM.
+        # We track destruction ourselves because wxPython has no
+        # window.IsDestroyed() method — see _destroyed flag set in Destroy().
+        if getattr(self, "_destroyed", False):
+            return
         if not self.monitoring:
             try:
                 def audio_callback(indata, frames, time, status):
@@ -208,6 +217,7 @@ class RecordingDialog(wx.Dialog):
         self.level_text.SetLabel(f"Level: {db_level:.1f} dB")
         
     def Destroy(self):
+        self._destroyed = True
         if self.monitor_stream:
             self.monitor_stream.stop()
             self.monitor_stream.close()
@@ -220,6 +230,8 @@ class StudioRecordingDialog(wx.Dialog):
         super().__init__(parent, title="Studio Recording - Director Control", size=(700, 600))
         # Accessible name: NVDA otherwise reads 'dialog'.
         name_dialog(self, "Studio Recording Director Control")
+
+        self._destroyed = False
 
         self.script_lines = script_lines
         self.input_device_id = input_device_id
@@ -248,7 +260,11 @@ class StudioRecordingDialog(wx.Dialog):
                 self.braille.send_status("Studio ready")
         except ImportError:
             self.braille = None
-        
+
+    def Destroy(self):
+        self._destroyed = True
+        super().Destroy()
+
     def create_voice_actor_monitor(self):
         """Create a simplified monitor window for voice actor in studio"""
         self.voice_actor_monitor = wx.Frame(None, title="Voice Actor Monitor", size=(500, 400))
@@ -559,6 +575,12 @@ class StudioRecordingDialog(wx.Dialog):
         
     def _update_ui(self, progress, transcription, current_line):
         """Update UI elements (called on main thread)"""
+        # Guard: this is invoked via wx.CallAfter from a worker thread. If
+        # the dialog was destroyed before the callback fired (session
+        # aborted, window closed early), touching dead widgets can trigger
+        # a Windows fatal exception (0x8001010d) via COM.
+        if getattr(self, "_destroyed", False):
+            return
         # Update main dialog
         self.progress_gauge.SetValue(int(progress['progress_percent']))
         progress_label = (

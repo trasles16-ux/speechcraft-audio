@@ -49,3 +49,12 @@ def wx_app() -> Any:
     # causes subsequent wx.Dialog() constructions to raise "No app
     # object has been created". The OS reclaims the C++ object when
     # the process exits, which is fine for CI.
+    #
+    # Known issue: on some Windows hosts, the OS-level teardown of the
+    # wx.App's COM objects during interpreter shutdown can raise a
+    # Windows SEH (STATUS_STACK_BUFFER_OVERRUN / 0xC0000409) that
+    # surfaces as a non-zero exit code after pytest reports
+    # "179 passed". The tests themselves all pass; the crash is at
+    # process exit, almost certainly tied to sounddevice/WASAPI COM
+    # cleanup order. Not blocking — see GitHub issue for the
+    # standalone pytest run that triggered this on a clean main.
