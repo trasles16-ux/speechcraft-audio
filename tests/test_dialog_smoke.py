@@ -581,6 +581,77 @@ def test_breath_dialog_radio_preset_is_mutually_exclusive_group(
         dlg.Destroy()
 
 
+def _assert_radios_mutually_exclusive(dlg, default_selected: str, others: list[str]) -> None:
+    """Shared check: the dialog's preset radios form ONE mutually-
+    exclusive Windows radio group.
+
+    Catches the RB_GROUP misconfiguration where either:
+      - RB_GROUP is on the *wrong* radio (splits into two groups), or
+      - RB_GROUP is on *every* radio (each in its own group, all
+        read 'selected' at once).
+    Either way NVDA sees a list of unrelated standalone radios instead
+    of one exclusive group, and the data is corrupted (multiple
+    presets 'selected').
+    """
+    # Opening state: only the default is selected, exactly one.
+    assert dlg.preset_radios[default_selected].GetValue(), (
+        f"default preset {default_selected!r} should be selected on open"
+    )
+    openly_selected = [n for n, r in dlg.preset_radios.items() if r.GetValue()]
+    assert len(openly_selected) == 1, (
+        f"exactly one radio should be selected on open, got {openly_selected} "
+        f"(RB_GROUP misconfiguration: every radio in its own group)"
+    )
+
+    # Select each non-default preset and verify it exclusively
+    for other in others:
+        dlg.preset_radios[other].SetValue(True)
+        now_selected = [n for n, r in dlg.preset_radios.items() if r.GetValue()]
+        assert now_selected == [other], (
+            f"selecting {other!r} should leave only {other!r} selected; "
+            f"got {now_selected} (radios are not in one exclusive group)"
+        )
+
+
+@needs_wx
+def test_compressor_dialog_radio_preset_is_mutually_exclusive_group(
+    wx_app: Any,
+) -> None:
+    """Regression test: the Compressor preset radios all had
+    RB_GROUP, so each was in its own Windows radio group and every
+    one read as 'selected' at the same time. That broke NVDA radio-
+    group navigation and was a data bug (multiple presets selected).
+    Fix: RB_GROUP on the first radio only, so all presets form one
+    mutually-exclusive group, with the default preset selected on open.
+    """
+    from dialogs.effects_dialogs import CompressorPresetDialog
+
+    dlg = CompressorPresetDialog(None)
+    try:
+        others = [n for n in dlg.preset_radios if n != dlg.selected_preset]
+        _assert_radios_mutually_exclusive(dlg, dlg.selected_preset, others)
+    finally:
+        dlg.Destroy()
+
+
+@needs_wx
+def test_eq_dialog_radio_preset_is_mutually_exclusive_group(
+    wx_app: Any,
+) -> None:
+    """Regression test: same RB_GROUP bug as the Compressor dialog,
+    applied to the EQ preset radios. All EQ presets must form one
+    mutually-exclusive group with the default preset selected on open.
+    """
+    from dialogs.effects_dialogs import EQPresetDialog
+
+    dlg = EQPresetDialog(None)
+    try:
+        others = [n for n in dlg.preset_radios if n != dlg.selected_preset]
+        _assert_radios_mutually_exclusive(dlg, dlg.selected_preset, others)
+    finally:
+        dlg.Destroy()
+
+
 @needs_wx
 def test_breath_dialog_each_preset_radio_has_distinct_accessible_name(
     wx_app: Any,

@@ -497,10 +497,23 @@ class CompressorPresetDialog(wx.Dialog):
         left_sizer = wx.StaticBoxSizer(left_box, wx.VERTICAL)
 
         self.preset_radios = {}
+        # wx.RadioButton style: RB_GROUP marks the *start* of a radio
+        # group. When EVERY radio has RB_GROUP, each radio is in its
+        # own group and Windows no longer enforces mutual exclusion —
+        # all of them can read as 'selected' at the same time. That
+        # broke NVDA navigation (the screen reader sees a list of
+        # unrelated standalone radios, not one exclusive group) and
+        # was a latent data bug too (multiple presets 'selected').
+        # Fix: RB_GROUP on the FIRST radio only, so all presets form
+        # one mutually-exclusive group. The first preset is
+        # selected by default, matching the dialog's selected_preset.
+        self._radios_created = 0
         for name in self.preset_names:
             if name == "Custom":
                 continue  # handled via Advanced checkbox
-            radio = wx.RadioButton(self, label=name, style=wx.RB_GROUP)
+            style = wx.RB_GROUP if self._radios_created == 0 else 0
+            self._radios_created += 1
+            radio = wx.RadioButton(self, label=name, style=style)
             desc = config.COMPRESSOR_PRESETS[name]["description"]
             radio.SetName(f"{name}. {desc}")  # NVDA otherwise reads 'radioButton'
             radio.SetToolTip(desc)
@@ -517,6 +530,11 @@ class CompressorPresetDialog(wx.Dialog):
             indent.AddSpacer(16)
             indent.Add(desc_st)
             left_sizer.Add(indent, 0, wx.BOTTOM | wx.LEFT, 2)
+
+        # Select the default preset so the right-hand display shows
+        # its values from the moment the dialog opens.
+        if self.preset_radios:
+            self.preset_radios[self.selected_preset].SetValue(True)
 
         left_sizer.AddSpacer(6)
 
@@ -800,10 +818,18 @@ class EQPresetDialog(wx.Dialog):
         left_sizer = wx.StaticBoxSizer(left_box, wx.VERTICAL)
 
         self.preset_radios = {}
+        # Same RB_GROUP rule as the Compressor dialog: RB_GROUP on the
+        # FIRST radio only. When every radio has RB_GROUP each ends up
+        # in its own group and Windows stops enforcing mutual exclusion
+        # (all can read 'selected' at once), which breaks NVDA's radio-
+        # group navigation and is a data bug. See CompressorPresetDialog.
+        self._radios_created = 0
         for name in self.preset_names:
             if name == "Custom":
                 continue
-            radio = wx.RadioButton(self, label=name, style=wx.RB_GROUP)
+            style = wx.RB_GROUP if self._radios_created == 0 else 0
+            self._radios_created += 1
+            radio = wx.RadioButton(self, label=name, style=style)
             desc = config.EQ_PRESETS[name]["description"]
             radio.SetName(f"{name}. {desc}")
             radio.SetToolTip(desc)
@@ -818,6 +844,11 @@ class EQPresetDialog(wx.Dialog):
             indent.AddSpacer(16)
             indent.Add(desc_st)
             left_sizer.Add(indent, 0, wx.BOTTOM | wx.LEFT, 2)
+
+        # Select the default preset so the right-hand display shows its
+        # band values from the moment the dialog opens.
+        if self.preset_radios:
+            self.preset_radios[self.selected_preset].SetValue(True)
 
         left_sizer.AddSpacer(6)
         self.advanced_check = wx.CheckBox(self, label="Show advanced controls")
