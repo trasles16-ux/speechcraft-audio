@@ -38,8 +38,8 @@ def test_list_features_returns_piper_and_local_transcription() -> None:
 
 def test_list_assets_piper_returns_sa_voices() -> None:
     names = set(list_assets("piper_tts"))
-    assert "en.za.carina" in names
-    assert "en.za.tildar" in names
+    assert "en_GB.cori" in names
+    assert "en_GB.alan" in names
 
 
 def test_list_assets_local_transcription_returns_tiny_and_base() -> None:
@@ -54,11 +54,11 @@ def test_list_assets_unknown_feature_raises_keyerror() -> None:
 
 
 def test_get_asset_returns_frozen_dataclass_with_description() -> None:
-    a = get_asset("piper_tts", "en.za.carina")
+    a = get_asset("piper_tts", "en_GB.cori")
     assert isinstance(a, FeatureAsset)
     assert a.feature == "piper_tts"
-    assert a.asset_name == "en.za.carina"
-    assert "South Africa" in a.description
+    assert a.asset_name == "en_GB.cori"
+    assert "Great Britain" in a.description
     # Frozen
     with pytest.raises(Exception):
         a.feature = "x"  # type: ignore
@@ -103,14 +103,21 @@ def test_whisper_assets_have_real_urls_and_shas() -> None:
             assert f["size_bytes"] > 0
 
 
-def test_piper_assets_have_placeholder_urls() -> None:
-    """Piper SA voices are not yet downloadable (host repo pending)."""
-    for asset_name in ("en.za.carina", "en.za.tildar"):
+def test_piper_assets_have_real_urls_and_shas() -> None:
+    """Piper en_GB voices ship with verified URLs and SHAs from
+    rhasspy/piper-voices — they are downloadable today."""
+    for asset_name in ("en_GB.cori", "en_GB.alan"):
         raw = FEATURE_ASSETS["piper_tts"][asset_name]
         for f in raw["files"]:
-            assert f["url"].startswith("TODO_"), (
-                f"piper_tts/{asset_name}/{f['name']} should be a placeholder"
+            assert not f["url"].startswith("TODO_"), (
+                f"piper_tts/{asset_name}/{f['name']} still has a placeholder URL"
             )
+            assert f["url"].startswith("https://huggingface.co/rhasspy/piper-voices/"), (
+                f"piper_tts/{asset_name}/{f['name']} URL should be from piper-voices repo"
+            )
+            assert len(f["sha256"]) == 64
+            assert f["sha256"] != "0" * 64
+            assert f["size_bytes"] > 0
 
 
 def test_is_downloadable_whisper_assets_is_true() -> None:
@@ -118,9 +125,10 @@ def test_is_downloadable_whisper_assets_is_true() -> None:
     assert is_downloadable("local_transcription", "base.en") is True
 
 
-def test_is_downloadable_piper_assets_is_false() -> None:
-    assert is_downloadable("piper_tts", "en.za.carina") is False
-    assert is_downloadable("piper_tts", "en.za.tildar") is False
+def test_is_downloadable_piper_assets_is_true() -> None:
+    """All piper assets in v1.3.0 ship with real URLs — all downloadable."""
+    assert is_downloadable("piper_tts", "en_GB.cori") is True
+    assert is_downloadable("piper_tts", "en_GB.alan") is True
 
 
 def test_total_asset_bytes_whisper_tiny_is_sum_of_files() -> None:
@@ -230,17 +238,6 @@ def test_is_ready_returns_true_when_paths_exist(tmp_path: Path) -> None:
 
 # --- download_asset (mocked) -------------------------------------------------
 
-def test_download_asset_raises_for_placeholder_urls(tmp_path: Path) -> None:
-    """Piper assets with TODO_ URLs must raise FeatureDownloadError."""
-    with pytest.raises(FeatureDownloadError, match="placeholder"):
-        download_asset(
-            "piper_tts",
-            "en.za.carina",
-            dest_dir=tmp_path,
-            state_file=tmp_path / "feature_state.json",
-        )
-
-
 def test_download_asset_raises_for_unknown_asset() -> None:
     with pytest.raises((KeyError, FeatureDownloadError)):
         download_asset(
@@ -249,6 +246,17 @@ def test_download_asset_raises_for_unknown_asset() -> None:
             dest_dir=Path("."),
             state_file=Path("."),
         )
+
+
+def test_download_asset_total_bytes_cover_all_files(tmp_path: Path) -> None:
+    """total_asset_bytes returns the sum of all file sizes in an asset."""
+    expected = sum(
+        f["size_bytes"]
+        for f in FEATURE_ASSETS["piper_tts"]["en_GB.cori"]["files"]
+    )
+    assert total_asset_bytes("piper_tts", "en_GB.cori") == expected
+    # sanity: ~60 MB model + small config
+    assert 60_000_000 < expected < 65_000_000
 
 
 def test_ensure_ready_is_idempotent(tmp_path: Path) -> None:
@@ -286,34 +294,22 @@ def test_ensure_ready_is_idempotent(tmp_path: Path) -> None:
 def test_ensure_ready_downloads_when_not_ready(tmp_path: Path) -> None:
     """When not ready, ensure_ready calls download_asset and returns True on success."""
     sf = tmp_path / "feature_state.json"
-    # Pre-seed the state file with a "ready" entry whose paths point to
-    # real files so the post-download is_ready check passes.
-    asset_dir = tmp_path / "local_transcription" / "tiny.en"
-    asset_dir.mkdir(parents=True)
-    for name in ("model.bin", "tokenizer.json", "vocabulary.txt", "config.json"):
-        (asset_dir / name).write_bytes(b"x")
-    sf.write_text(
-        json.dumps({
-            "local_transcription/tiny.en": {
-                "ready": True,
-                "paths": {name: str(asset_dir / name) for name in ("model.bin", "tokenizer.json", "vocabulary.txt", "config.json")},
-                "downloaded_at": "2026-09-14T00:00:00Z",
-                "last_error": None,
-            }
-        }),
-        encoding="utf-8",
-    )
-    # Make is_ready return False initially (as if the asset is not ready),
-    # then let download_asset run, then let the final is_ready check pass.
-    ready_calls = [False, True]  # first call False (not ready), second True (just downloaded)
-    with patch("feature_manager.is_ready", side_effect=lambda *a, **kw: ready_calls.pop(0)) as mock_ir:
-        result = ensure_ready(
-            "local_transcription", "tiny.en",
-            dest_dir=tmp_path,
-            state_file=sf,
-        )
+    # Mock download_asset to avoid any real network access.
+    with patch("feature_manager.download_asset") as mock_dl:
+        mock_dl.return_value = {
+            "ready": True, "paths": {}, "downloaded_at": "x", "last_error": None,
+        }
+        # ensure_ready's internal is_ready call must return False first
+        # (not ready → triggers download), then True (post-download check).
+        with patch("feature_manager.is_ready") as mock_ir:
+            mock_ir.side_effect = [False, True]
+            result = ensure_ready(
+                "local_transcription", "tiny.en",
+                dest_dir=tmp_path,
+                state_file=sf,
+            )
     assert result is True
-    assert mock_ir.call_count == 2
+    mock_dl.assert_called_once()
 
 
 # --- Smoke -------------------------------------------------------------------

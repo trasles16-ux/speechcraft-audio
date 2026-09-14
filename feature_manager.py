@@ -51,27 +51,36 @@ class FeatureAsset:
 #: list of ``{"name", "url", "sha256", "size_bytes"}`` dicts. Adding
 #: a voice or model is a data edit, not a code change.
 FEATURE_ASSETS: Final = {
-    # Piper TTS voices (South African set)
-    # URLs are placeholders until the SA community voice repo is
-    # identified (see research findings in the plan doc).
+    # Piper TTS voices — en_GB voices from rhasspy/piper-voices.
+    # (SA en_ZA voices Carina/Tildar do not exist publicly yet — see
+    # research findings in the plan doc. en_GB voices used as the
+    # working default until the SA voice project lands.)
     "piper_tts": {
-        "en.za.carina": {
+        "en_GB.cori": {
             "files": [
-                {"name": "model", "url": "TODO_CARINA_MODEL_URL",
-                 "sha256": "0" * 64, "size_bytes": 0},
-                {"name": "config", "url": "TODO_CARINA_CONFIG_URL",
-                 "sha256": "0" * 64, "size_bytes": 0},
+                {"name": "model",
+                 "url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/cori/medium/en_GB-cori-medium.onnx",
+                 "sha256": "1899f98e5fb8310154f3c2973f4b8a929ba7245e722b3d3a85680b833d95f10d",
+                 "size_bytes": 63_531_379},
+                {"name": "config",
+                 "url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/cori/medium/en_GB-cori-medium.onnx.json",
+                 "sha256": "e262c16d7f192f69d4edd6b4ef8a5915379e67495fcc402f1ab15eeb33da3d36",
+                 "size_bytes": 4_966},
             ],
-            "description": "English (South Africa) — female, medium quality",
+            "description": "English (Great Britain) — Cori, female, medium quality (60 MB)",
         },
-        "en.za.tildar": {
+        "en_GB.alan": {
             "files": [
-                {"name": "model", "url": "TODO_TILDAR_MODEL_URL",
-                 "sha256": "0" * 64, "size_bytes": 0},
-                {"name": "config", "url": "TODO_TILDAR_CONFIG_URL",
-                 "sha256": "0" * 64, "size_bytes": 0},
+                {"name": "model",
+                 "url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx",
+                 "sha256": "0a309668932205e762801f1efc2736cd4b0120329622adf62be09e56339d3330",
+                 "size_bytes": 63_201_294},
+                {"name": "config",
+                 "url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx.json",
+                 "sha256": "c0f0d124e5895c00e7c03b35dcc8287f319a6998a365b182deb5c8e752ee8c1e",
+                 "size_bytes": 4_888},
             ],
-            "description": "English (South Africa) — male, medium quality",
+            "description": "English (Great Britain) — Alan, male, medium quality (60 MB)",
         },
     },
     # Local transcription (faster-whisper)
@@ -154,9 +163,10 @@ def get_asset(feature: str, asset_name: str) -> FeatureAsset:
 def is_downloadable(feature: str, asset_name: str) -> bool:
     """True if all files in the asset have real (non-TODO) URLs.
 
-    Piper assets ship with placeholder URLs until the SA community
-    voice repo is identified — this function gates the wizard's
-    Download button so it is disabled for those.
+    As of v1.3.0 every registered asset ships with real URLs + SHAs,
+    so this returns True for all of them. It exists as a guard so a
+    future asset added with placeholder data won't silently enable a
+    dead download button in the wizard.
     """
     raw = FEATURE_ASSETS[feature][asset_name]
     return all(not f["url"].startswith("TODO_") for f in raw["files"])
@@ -307,14 +317,7 @@ def download_asset(
         url = file_spec["url"]
         expected_sha = file_spec["sha256"]
 
-        if url.startswith("TODO_"):
-            raise FeatureDownloadError(
-                key,
-                f"asset not yet available — URL placeholder: {url!r}",
-            )
-
         final_path = out_dir / file_name
-        part_path = out_dir / (file_name + ".part")
 
         # Reuse the v1.2.0 download machinery
         from updater import (
@@ -323,11 +326,9 @@ def download_asset(
             verify_asset_sha256,
         )
 
-        # progress_cb signature: (asset_key, bytes_done_in_this_file, total_for_asset)
-        # download_with_progress gives us (bytes_in_this_file, total_this_file)
-        # so we offset by bytes_done to get the whole-asset progress.
+        # Offset the per-file progress into the whole-asset progress
+        # so the caller can drive one bar across every file.
         _bytes_done_snapshot = bytes_done
-        _total_this_file = file_spec.get("size_bytes", 0)
 
         def _chunk_cb(done: int, total: int) -> None:
             if progress_cb is not None:
@@ -341,7 +342,7 @@ def download_asset(
                 cancel_check=cancel_check,
             )
         except UpdateCheckError as exc:
-            # download_with_progress already cleaned up .part on cancel/error
+            # download_with_progress already cleaned up the .part file
             state = load_feature_state(state_file=state_file)
             entry = state.get(key) or _empty_state_entry()
             entry["ready"] = False
