@@ -46,8 +46,8 @@ Var FullRadio
 !include "x64.nsh"
 
 ; ==================== PAGE SEQUENCE ====================
-!define MUI_WELCOMEPAGE_TITLE "Welcome to SpeechCraft Studio"
-!define MUI_WELCOMEPAGE_TEXT "This wizard installs SpeechCraft Studio on your computer.$\r$\n$\r$\nSpeechCraft Studio is an accessible audio editor. It comes in two editions: Core (small download, recommended) and Full (everything). You'll be asked to pick one on the next page.$\r$\n$\r$\nYou can switch editions later from the Help menu inside the app.$\r$\nClick Next to continue."
+!define MUI_WELCOMEPAGE_TITLE "Welcome to SpeechCraft Studio 1.3.0"
+!define MUI_WELCOMEPAGE_TEXT "This wizard installs SpeechCraft Studio v1.3.0 on your computer. SpeechCraft Studio is an accessible audio editor. You'll be asked to pick an edition on the next page: Core (small install, models downloaded on demand) or Full (all models bundled, works offline out of the box). Click Next to continue."
 !insertmacro MUI_PAGE_WELCOME
 
 !insertmacro MUI_PAGE_LICENSE "LICENSE.txt"
@@ -57,7 +57,7 @@ Page custom BundlePage_Create BundlePage_Leave
 !insertmacro MUI_PAGE_INSTFILES
 
 !define MUI_FINISHPAGE_TITLE "Installation complete"
-!define MUI_FINISHPAGE_TEXT "SpeechCraft Studio is now installed.$\r$\n$\r$\nChoose an edition below and click Finish to launch it, or click Finish without selecting anything to close the installer."
+!define MUI_FINISHPAGE_TEXT "SpeechCraft Studio 1.3.0 is now installed. Tick the checkboxes below to open the install folder and/or launch SpeechCraft Studio."
 ; "Launch" button on finish page — points at the EXE matching the
 ; edition the user picked on the bundle-choice page. Without this
 ; override, NSIS tries $INSTDIR\<Name>.exe which is
@@ -67,6 +67,8 @@ Page custom BundlePage_Create BundlePage_Leave
 !define MUI_FINISHPAGE_RUN_TEXT "Launch SpeechCraft Studio"
 !define MUI_FINISHPAGE_RUN_NOTCHECKED
 !define MUI_FINISHPAGE_RUN_FUNCTION "LaunchSpeechCraft"
+!define MUI_FINISHPAGE_SHOWREADME "$INSTDIR\ReadMe.txt"
+!define MUI_FINISHPAGE_SHOWREADME_TEXT "Open the SpeechCraft Read Me"
 
 !insertmacro MUI_PAGE_FINISH
 
@@ -124,17 +126,23 @@ Section "SpeechCraft Studio" SecMain
     CreateShortcut "$SMPROGRAMS\SpeechCraft Studio\SpeechCraft Studio (Full).lnk" "$INSTDIR\SpeechCraft_Studio_Full.exe"
     
     CreateShortcut "$SMPROGRAMS\SpeechCraft Studio\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
-    
+
     ; Write uninstaller
     WriteUninstaller "$INSTDIR\Uninstall.exe"
+
+    ; Write a short readme into the install dir so the finish-page
+    ; "Open Read Me" checkbox has something to show.
+    SetOutPath "$INSTDIR"
+    File "ReadMe.txt"
     
-    ; Write registry entries
+    ; Write registry entries — standard Add/Remove Programs keys.
+    ; (The app reads its own feature flags from setup.json via prefs.py,
+    ; so we don't write a BundleChoice key here — it would be dead data.)
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "DisplayName" "SpeechCraft Studio"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "UninstallString" "$INSTDIR\Uninstall.exe"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "DisplayVersion" "1.1.0"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "Publisher" "Tracy Smith"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "DisplayVersion" "1.3.0"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "Publisher" "Tracy Smith Consulting"
     WriteRegStr HKLM "Software\SpeechCraft\Studio" "InstallDir" "$INSTDIR"
-    WriteRegStr HKLM "Software\SpeechCraft\Studio" "BundleChoice" "$BundleChoice"
 SectionEnd
 
 ; ==================== BUNDLE CHOICE PAGE ====================
@@ -153,25 +161,25 @@ Function BundlePage_Create
     ; Core radio. WS_GROUP (added by NSD_CreateFirstRadioButton) marks
     ; this as the start of a new radio-button group so Tab and arrow
     ; keys navigate between Core and Full only.
-    ${NSD_CreateFirstRadioButton} 20 35 100% 12u "Core — recommended (172 MB)"
+    ${NSD_CreateFirstRadioButton} 20 35 100% 12u "Core — on-demand feature downloads (172 MB)"
     Pop $CoreRadio
     SendMessage $CoreRadio ${BM_SETCHECK} ${BST_CHECKED} 0
-    
+
     ; Core description
-    ${NSD_CreateLabel} 35 50 100% 30u "Recording, transcription via cloud account, TTS, basic effects, breath smoothing, room tone match. Great starting point for everyday audio work."
+    ${NSD_CreateLabel} 35 50 100% 30u "The lean install: recording, editing, effects, and TTS. Feature models (Whisper transcription, Piper voices) download on demand when you enable them in the setup wizard. Smaller install, works right away for everyday audio work."
     Pop $0
-    
+
     ; Full radio — NSD_CreateRadioButton (no WS_GROUP), so it's part
     ; of the same group as Core. Tab/arrow keys will toggle between them.
-    ${NSD_CreateRadioButton} 20 90 100% 12u "Full — all features (435 MB)"
+    ${NSD_CreateRadioButton} 20 90 100% 12u "Full — all feature models pre-bundled (435 MB)"
     Pop $FullRadio
-    
+
     ; Full description
-    ${NSD_CreateLabel} 35 105 100% 30u "Everything in Core, plus local Whisper transcription and advanced effects (pedalboard)."
+    ${NSD_CreateLabel} 35 105 100% 30u "Everything in Core, with the local Whisper transcription and Piper TTS models already bundled. Works fully offline out of the box — no download step, no first-run waiting. Best if you know you'll use the AI features."
     Pop $0
     
     ; Footer note
-    ${NSD_CreateLabel} 20 150 100% 20u "Tip: you can switch editions later from the Help menu inside the app."
+    ${NSD_CreateLabel} 20 150 100% 20u "Tip: you can switch editions later from the setup wizard (Help → Personalise SpeechCraft)."
     Pop $0
     
     nsDialogs::Show
@@ -207,25 +215,38 @@ Function .onInstFailed
 FunctionEnd
 
 ; ==================== UNINSTALLER ====================
+; un.onUninstSuccess runs AFTER the Uninstall Section has completed,
+; so the registry keys are already removed there. We keep a minimal
+; success message here for user feedback; no file/registry work.
 Function un.onUninstSuccess
-    MessageBox MB_ICONINFORMATION|MB_OK "SpeechCraft Studio has been removed."
-    DeleteRegKey HKLM "Software\SpeechCraft\Studio"
-    DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio"
+    MessageBox MB_ICONINFORMATION|MB_OK "SpeechCraft Studio has been removed. Your personalisation settings were kept in %APPDATA%\SpeechCraft."
 FunctionEnd
 
 Function un.onInit
 FunctionEnd
 
 Section "Uninstall"
-    ; Remove files
+    ; Remove the installed EXEs and uninstaller
     Delete "$INSTDIR\SpeechCraft_Studio_Core.exe"
     Delete "$INSTDIR\SpeechCraft_Studio_Full.exe"
+    Delete "$INSTDIR\ReadMe.txt"
     Delete "$INSTDIR\Uninstall.exe"
-    
-    ; Remove shortcuts
+
+    ; Remove Start Menu shortcuts
     Delete "$SMPROGRAMS\SpeechCraft Studio\*.lnk"
     RMDir "$SMPROGRAMS\SpeechCraft Studio"
-    
-    ; Remove installation directory
+
+    ; Remove the install directory
     RMDir "$INSTDIR"
+
+    ; Remove the user's downloaded feature models (Piper voices,
+    ; Whisper ASR) stored under %APPDATA%\SpeechCraft\feature_assets.
+    ; The setup.json and other user prefs in %APPDATA%\SpeechCraft are
+    ; deliberately NOT removed — the user may want to keep their
+    ; personalisation and just reinstall with a different edition.
+    RMDir /R "$APPDATA\SpeechCraft\feature_assets"
+
+    ; Remove registry keys
+    DeleteRegKey HKLM "Software\SpeechCraft\Studio"
+    DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio"
 SectionEnd
