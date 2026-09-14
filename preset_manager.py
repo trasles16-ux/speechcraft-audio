@@ -13,15 +13,32 @@ import wx
 # Paths
 # ---------------------------------------------------------------------------
 def _get_presets_path():
-    """Return the path to the custom presets JSON file."""
-    try:
+    """Return the path to the custom presets JSON file.
+
+    Resolution order:
+    1. If wx.App is alive (GUI context): use wx.StandardPaths to get
+       the OS-appropriate user-data directory, place presets inside it.
+    2. Otherwise (test / headless / startup): fall back to a wx-free
+       path under $HOME (``~/.speechcraft/presets.json``).
+
+    Why this dance: on some Windows hosts, calling
+    ``wx.StandardPaths.Get().GetUserDataDir()`` raises a Windows fatal
+    access violation that segfaults the whole process - it's not a
+    catchable Python Exception, so a bare ``try/except Exception``
+    doesn't help. Guarding the wx call with ``wx.GetApp() is not None``
+    avoids the crash entirely in test/headless contexts where we never
+    wanted wx.StandardPaths anyway.
+    """
+    if wx.GetApp() is not None:
+        # GUI context - trust wx.StandardPaths.
         app_data = wx.StandardPaths.Get().GetUserDataDir()
-    except Exception:
-        # Fallback for non-GUI contexts
-        app_data = os.path.expanduser("~/AppData/Roaming/SpeechCraftStudio")
-    parent = os.path.dirname(app_data)
-    os.makedirs(parent, exist_ok=True)
-    return os.path.join(parent, "speechcraft_presets.json")
+    else:
+        # No live wx.App (tests, headless). Use a deterministic
+        # wx-free location so the test suite doesn't segfault on
+        # hosts where wx.StandardPaths is unhappy.
+        app_data = os.path.join(os.path.expanduser("~"), ".speechcraft")
+    os.makedirs(app_data, exist_ok=True)
+    return os.path.join(app_data, "speechcraft_presets.json")
 
 
 # ---------------------------------------------------------------------------

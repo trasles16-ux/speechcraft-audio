@@ -578,3 +578,104 @@ def test_no_function_scope_sounddevice_import() -> None:
         f"Module-level `sd` is bound via safe_import; do not re-import. "
         f"Offenders: {offenders}"
     )
+
+
+# --- preset_manager regression tests (v1.3.0-prep) --------------------------
+
+
+@needs_wx
+def test_preset_manager_path_uses_wx_when_app_alive(monkeypatch, tmp_path):
+    """When wx.App is alive, _get_presets_path uses wx.StandardPaths.
+
+    This is the GUI-context happy path: SpeechCraft's main frame is
+    alive, wx.App is alive, we honour the OS-appropriate user-data
+    directory that wx computes for us.
+    """
+    import preset_manager
+
+    fake_app_data = tmp_path / "wx_user_data"
+    fake_app_data.mkdir()
+
+    class _FakePaths:
+        @staticmethod
+        def GetUserDataDir():
+            return str(fake_app_data)
+
+    class _FakeStandardPaths:
+        @staticmethod
+        def Get():
+            return _FakePaths()
+
+    # Pretend wx.App is alive.
+    monkeypatch.setattr(preset_manager.wx, "GetApp", lambda: object())
+    monkeypatch.setattr(preset_manager.wx, "StandardPaths", _FakeStandardPaths)
+
+    path = preset_manager._get_presets_path()
+    assert str(fake_app_data) in path
+    assert path.endswith("speechcraft_presets.json")
+
+
+@needs_wx
+def test_preset_manager_path_falls_back_when_no_wx_app(monkeypatch, tmp_path):
+    """When wx.App is NOT alive, _get_presets_path must NOT call
+    wx.StandardPaths.
+
+    On some Windows hosts (the v1.2.0 release cycle), wx is importable
+    yet calling wx.StandardPaths.Get().GetUserDataDir() raises a
+    Windows fatal access violation - it segfaults the whole process,
+    not a catchable Exception. The previous ``except Exception`` did
+    nothing.
+
+    Fix: only call wx.StandardPaths when wx.GetApp() returns a live
+    app. In test contexts (and headless contexts) wx.GetApp() returns
+    None, so we fall back to a wx-free path under the user's home
+    directory.
+    """
+    import preset_manager
+
+    # Pretend wx.App is NOT alive - this is the test/headless case.
+    monkeypatch.setattr(preset_manager.wx, "GetApp", lambda: None)
+    monkeypatch.setattr(preset_manager.os.path, "expanduser",
+                        lambda _: str(tmp_path / "fake_home"))
+
+    # Should not call wx.StandardPaths at all; if it does, our mock
+    # would blow up loudly (so the regression would be caught).
+    monkeypatch.setattr(
+        preset_manager.wx, "StandardPaths",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("wx.StandardPaths was called but wx.App is None!")
+        ),
+    )
+
+    path = preset_manager._get_presets_path()
+    assert path.endswith("speechcraft_presets.json")
+    assert "fake_home" in path or str(tmp_path) in path
+
+
+@needs_wx
+def test_preset_manager_load_returns_dicts_when_no_wx_app(
+    monkeypatch, tmp_path
+):
+    """load_custom_presets must not crash the test process when
+    wx.App is None. The previous behaviour was a Windows fatal
+    exception that aborted the entire test session mid-run.
+
+    Now: when wx.GetApp() returns None, we silently fall back to a
+    non-wx path under $HOME and return empty presets (no file yet).
+    """
+    import preset_manager
+
+    monkeypatch.setattr(preset_manager.wx, "GetApp", lambda: None)
+    monkeypatch.setattr(preset_manager.os.path, "expanduser",
+                        lambda _: str(tmp_path / "fake_home"))
+    monkeypatch.setattr(
+        preset_manager.wx, "StandardPaths",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("wx.StandardPaths was called but wx.App is None!")
+        ),
+    )
+
+    eq, comp, breath = preset_manager.load_custom_presets()
+    assert eq == {}
+    assert comp == {}
+    assert breath == {}

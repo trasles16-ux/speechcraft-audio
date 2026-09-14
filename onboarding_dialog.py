@@ -13,53 +13,55 @@ Lifecycle:
 - User picks a bundle type ("Use Core" / "Use Full") and clicks OK
 - We write the choice to ~/.speechcraft/setup.json
 - Run the chosen bundle
+
+The actual read/write of ``setup.json`` lives in :mod:`prefs` (shared
+with :mod:`feature_flags` and the auto-update wrappers in
+``audio_editor``). The ``_load_prefs`` / ``_save_prefs`` aliases
+below are kept for backward compatibility with existing tests and
+callers - new code should import from :mod:`prefs` directly.
 """
 
 from __future__ import annotations
 
-import json
-import os
-import sys
-from pathlib import Path
-from typing import Any
-
 import wx
 
-# Where we store user preferences. %APPDATA% on Windows, ~/.speechcraft
-# on Linux/macOS dev runs.
-if sys.platform == "win32":
-    PREFS_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / "SpeechCraft"
-else:
-    PREFS_DIR = Path.home() / ".speechcraft"
+# Re-export the canonical prefs helpers so callers that already import
+# from this module keep working. New code should ``from prefs import
+# load_prefs, save_prefs`` directly.
+#
+# We wrap rather than alias so that monkeypatching ``od_module.PREFS_FILE``
+# in tests continues to work: the wrapper reads PREFS_FILE from this
+# module's global namespace at call time, not from prefs' internal global.
+from prefs import (  # noqa: F401  (re-export)
+    PREFS_DIR,
+    PREFS_FILE,
+    load_prefs,
+    save_prefs,
+)
 
-PREFS_FILE = PREFS_DIR / "setup.json"
 
+def _load_prefs(prefs_file: Path | None = None) -> dict:
+    """Read setup.json (via this module's PREFS_FILE if not overridden).
 
-def _load_prefs(prefs_file: Path | None = None) -> dict[str, Any]:
-    """Read existing prefs (if any). Returns {} on any parse error.
-
-    Prefs_path override exists so tests can redirect to a temp file.
-    Production code uses the module-level PREFS_FILE.
+    Kept under the legacy underscore name for backward compatibility.
+    The actual logic lives in :func:`prefs.load_prefs`.
     """
-    target = prefs_file if prefs_file is not None else PREFS_FILE
-    if not target.exists():
-        return {}
-    try:
-        return json.loads(target.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
+    return load_prefs(prefs_file=(prefs_file if prefs_file is not None else PREFS_FILE))
 
 
-def _save_prefs(prefs: dict[str, Any], prefs_file: Path | None = None) -> None:
-    """Persist prefs to disk. Best-effort; no error dialog."""
-    target = prefs_file if prefs_file is not None else PREFS_FILE
-    try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(prefs, indent=2), encoding="utf-8")
-    except OSError:
-        # Read-only filesystem, no permissions. Not fatal — we just
-        # re-prompt next launch.
-        pass
+def _save_prefs(
+    prefs_dict: dict | None = None,
+    *,
+    prefs_file: Path | None = None,
+) -> None:
+    """Write prefs to setup.json (via this module's PREFS_FILE if not overridden).
+
+    Kept under the legacy underscore name for backward compatibility.
+    The actual logic lives in :func:`prefs.save_prefs`.
+    """
+    if prefs_dict is None:
+        raise TypeError("_save_prefs() missing required argument: 'prefs_dict'")
+    save_prefs(prefs_dict, prefs_file=(prefs_file if prefs_file is not None else PREFS_FILE))
 
 
 def get_preferred_bundle() -> str | None:

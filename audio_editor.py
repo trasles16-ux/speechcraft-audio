@@ -2981,14 +2981,14 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
     _AUTO_CHECK_DEFAULT = True
 
     def _load_prefs_for_update(self):
-        """Read the user prefs dict. Wrapper around onboarding_dialog._load_prefs."""
-        from onboarding_dialog import _load_prefs
-        return _load_prefs()
+        """Read the user prefs dict. Wrapper around prefs.load_prefs."""
+        from prefs import load_prefs
+        return load_prefs()
 
     def _save_prefs_for_update(self, prefs):
-        """Write the user prefs dict. Wrapper around onboarding_dialog._save_prefs."""
-        from onboarding_dialog import _save_prefs
-        _save_prefs(prefs)
+        """Write the user prefs dict. Wrapper around prefs.save_prefs."""
+        from prefs import save_prefs
+        save_prefs(prefs=prefs)
 
     def _is_auto_check_enabled(self):
         prefs = self._load_prefs_for_update()
