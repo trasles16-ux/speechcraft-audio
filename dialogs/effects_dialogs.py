@@ -43,6 +43,11 @@ from pydub import AudioSegment
 import config
 import preset_manager
 
+# Accessibility helpers. Centralised in dialogs/_a11y.py so the same
+# accessible-name conventions apply to every dialog in this file (and
+# the recording dialogs). See that module for the conventions.
+from dialogs._a11y import name_dialog, name_group, name_widget
+
 class AudioClipboard:
     """Stores cut audio segments and their associated word segments for pasting"""
     _segment = None
@@ -65,28 +70,47 @@ class EffectSettingsDialog(wx.Dialog):
     def __init__(self, parent, title, params):
         # params: dict of {label: (value, min, max)} or {label: value}
         super().__init__(parent, title=title)
+        # Accessible name: NVDA otherwise reads 'dialog'.
+        name_dialog(self, title)
         self.params = params
         self.controls = {}
-        
+
         sizer = wx.BoxSizer(wx.VERTICAL)
         fgs = wx.FlexGridSizer(len(params), 2, 10, 10)
-        
+
         for label, val in params.items():
             st = wx.StaticText(self, label=label)
             if isinstance(val, tuple):
                 ctrl = wx.Slider(self, value=int(val[0]), minValue=int(val[1]), maxValue=int(val[2]), style=wx.SL_HORIZONTAL | wx.SL_LABELS)
             else:
                 ctrl = wx.TextCtrl(self, value=str(val))
-            
+
+            # Accessible names: NVDA otherwise reads 'staticText'
+            # and 'slider' / 'text' respectively.
+            name_widget(st, f"{label} label")
+            name_widget(ctrl, f"{label} control")
+
             fgs.Add(st)
             fgs.Add(ctrl, 1, wx.EXPAND)
             self.controls[label] = ctrl
-            
+
         sizer.Add(fgs, 1, wx.ALL | wx.EXPAND, 15)
-        
+
         btn_sizer = self.CreateButtonSizer(wx.OK | wx.CANCEL)
+        # CreateButtonSizer uses wx.ID_OK/wx.ID_CANCEL with default
+        # "OK"/"Cancel" labels. NVDA sees the default "button" name
+        # for these unless we set one explicitly.
+        for child in btn_sizer.GetChildren():
+            w = child.GetWindow() if hasattr(child, "GetWindow") else None
+            if w is None:
+                continue
+            wid = w.GetId()
+            if wid == wx.ID_OK:
+                name_widget(w, "OK, apply effect and close dialog")
+            elif wid == wx.ID_CANCEL:
+                name_widget(w, "Cancel, close dialog without applying")
         sizer.Add(btn_sizer, 0, wx.ALL | wx.ALIGN_CENTER, 10)
-        
+
         self.SetSizerAndFit(sizer)
 
     def get_values(self):
@@ -443,6 +467,8 @@ class CompressorPresetDialog(wx.Dialog):
 
     def __init__(self, parent, title="Compressor — Voice Presets"):
         super().__init__(parent, title=title)
+        # Accessible name: NVDA otherwise reads 'dialog'.
+        name_dialog(self, title)
         self.preset_names = list(config.COMPRESSOR_PRESETS.keys()) + self._load_custom_names()
         self.selected_preset = "Voiceover/broadcast"
         self.show_advanced = False
@@ -458,6 +484,7 @@ class CompressorPresetDialog(wx.Dialog):
 
         # --- LEFT: Preset list ---
         left_box = wx.StaticBox(self, label="Preset")
+        name_group(left_box, "Preset")  # NVDA otherwise reads 'groupBox'
         left_sizer = wx.StaticBoxSizer(left_box, wx.VERTICAL)
 
         self.preset_radios = {}
@@ -466,12 +493,14 @@ class CompressorPresetDialog(wx.Dialog):
                 continue  # handled via Advanced checkbox
             radio = wx.RadioButton(self, label=name, style=wx.RB_GROUP)
             desc = config.COMPRESSOR_PRESETS[name]["description"]
+            radio.SetName(f"{name}. {desc}")  # NVDA otherwise reads 'radioButton'
             radio.SetToolTip(desc)
             self.preset_radios[name] = radio
             left_sizer.Add(radio, 0, wx.ALL, 4)
 
             # Description below the radio
             desc_st = wx.StaticText(self, label=desc)
+            desc_st.SetName(f"Description for {name}: {desc}")  # NVDA otherwise reads 'staticText'
             desc_st.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
             desc_st.SetForegroundColour(wx.Colour(80, 80, 80))
             # indent it
@@ -484,6 +513,7 @@ class CompressorPresetDialog(wx.Dialog):
 
         # Advanced checkbox
         self.advanced_check = wx.CheckBox(self, label="Show advanced controls")
+        self.advanced_check.SetName("Show advanced controls, reveals compressor sliders")
         self.advanced_check.Bind(wx.EVT_CHECKBOX, self._on_advanced_toggle)
         left_sizer.Add(self.advanced_check, 0, wx.ALL, 4)
 
@@ -501,7 +531,9 @@ class CompressorPresetDialog(wx.Dialog):
             row = wx.BoxSizer(wx.HORIZONTAL)
             st = wx.StaticText(self.right_panel, label=pn + ":")
             st.SetMinSize((110, -1))
+            name_widget(st, f"{pn} label")  # NVDA otherwise reads 'staticText'
             val_st = wx.StaticText(self.right_panel, label="")
+            name_widget(val_st, f"{pn} current value")
             row.Add(st, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
             row.Add(val_st, 1, wx.ALIGN_CENTER_VERTICAL)
             self.param_labels[pn] = val_st
@@ -519,8 +551,10 @@ class CompressorPresetDialog(wx.Dialog):
             row = wx.BoxSizer(wx.HORIZONTAL)
             st = wx.StaticText(self.right_panel, label=pn + ":")
             st.SetMinSize((110, -1))
+            name_widget(st, f"{pn} advanced label")
             slider = wx.Slider(self.right_panel, value=int(default), minValue=int(lo),
                                maxValue=int(hi), style=wx.SL_HORIZONTAL | wx.SL_LABELS)
+            name_widget(slider, f"{pn} advanced slider")  # NVDA otherwise reads 'slider'
             slider.Show(False)
             row.Add(st, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 4)
             row.Add(slider, 1, wx.EXPAND)
@@ -542,6 +576,11 @@ class CompressorPresetDialog(wx.Dialog):
         manage_btn = wx.Button(self, label="Manage Custom...")
         ok_btn = wx.Button(self, wx.ID_OK)
         cancel_btn = wx.Button(self, wx.ID_CANCEL)
+        # NVDA otherwise reads 'button' for all of these.
+        save_btn.SetName("Save as Preset, saves current settings as a new custom compressor preset")
+        manage_btn.SetName("Manage Custom, opens dialog to delete custom compressor presets")
+        ok_btn.SetName("OK, apply compressor and close dialog")
+        cancel_btn.SetName("Cancel, close dialog without applying")
         save_btn.Bind(wx.EVT_BUTTON, self._on_save_as_preset)
         manage_btn.Bind(wx.EVT_BUTTON, self._on_manage_custom)
         btn_row.AddMany([
@@ -729,6 +768,8 @@ class EQPresetDialog(wx.Dialog):
 
     def __init__(self, parent, title="Equalizer — Voice Presets"):
         super().__init__(parent, title=title)
+        # Accessible name: NVDA otherwise reads 'dialog'.
+        name_dialog(self, title)
         self.preset_names = list(config.EQ_PRESETS.keys()) + self._load_custom_names()
         self.selected_preset = "Radio/podcast ready"
         self.show_advanced = False
@@ -746,6 +787,7 @@ class EQPresetDialog(wx.Dialog):
 
         # --- LEFT: Preset list ---
         left_box = wx.StaticBox(self, label="Preset")
+        name_group(left_box, "Preset")
         left_sizer = wx.StaticBoxSizer(left_box, wx.VERTICAL)
 
         self.preset_radios = {}
@@ -754,11 +796,13 @@ class EQPresetDialog(wx.Dialog):
                 continue
             radio = wx.RadioButton(self, label=name, style=wx.RB_GROUP)
             desc = config.EQ_PRESETS[name]["description"]
+            radio.SetName(f"{name}. {desc}")
             radio.SetToolTip(desc)
             self.preset_radios[name] = radio
             left_sizer.Add(radio, 0, wx.ALL, 4)
 
             desc_st = wx.StaticText(self, label=desc)
+            desc_st.SetName(f"Description for {name}: {desc}")
             desc_st.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
             desc_st.SetForegroundColour(wx.Colour(80, 80, 80))
             indent = wx.BoxSizer(wx.HORIZONTAL)
@@ -768,6 +812,7 @@ class EQPresetDialog(wx.Dialog):
 
         left_sizer.AddSpacer(6)
         self.advanced_check = wx.CheckBox(self, label="Show advanced controls")
+        self.advanced_check.SetName("Show advanced controls, reveals per-band EQ sliders")
         self.advanced_check.Bind(wx.EVT_CHECKBOX, self._on_advanced_toggle)
         left_sizer.Add(self.advanced_check, 0, wx.ALL, 4)
 
@@ -783,7 +828,9 @@ class EQPresetDialog(wx.Dialog):
             row = wx.BoxSizer(wx.HORIZONTAL)
             st = wx.StaticText(self.right_panel, label=label)
             st.SetMinSize((200, -1))
+            name_widget(st, f"{label} label")
             val_st = wx.StaticText(self.right_panel, label="0 dB")
+            name_widget(val_st, f"{label} current gain")
             row.Add(st, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
             row.Add(val_st, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 4)
             self.band_labels[label] = val_st
@@ -793,6 +840,7 @@ class EQPresetDialog(wx.Dialog):
 
         # Advanced sliders for each band
         hint_st = wx.StaticText(self.right_panel, label="Advanced band controls:")
+        hint_st.SetName("Advanced band controls heading")
         hint_st.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_ITALIC, wx.FONTWEIGHT_NORMAL))
         hint_st.Show(False)
         self.right_sizer.Add(hint_st, 0, wx.LEFT | wx.BOTTOM, 4)
@@ -803,8 +851,10 @@ class EQPresetDialog(wx.Dialog):
             row = wx.BoxSizer(wx.HORIZONTAL)
             st = wx.StaticText(self.right_panel, label=label.split(" ")[0] + " Hz:")
             st.SetMinSize((80, -1))
+            name_widget(st, f"{label} advanced label")
             slider = wx.Slider(self.right_panel, value=0, minValue=-12, maxValue=12,
                                style=wx.SL_HORIZONTAL | wx.SL_LABELS)
+            name_widget(slider, f"{label} gain slider, in decibels from minus 12 to plus 12")
             slider.Show(False)
             row.Add(st, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 4)
             row.Add(slider, 1, wx.EXPAND)
@@ -826,6 +876,10 @@ class EQPresetDialog(wx.Dialog):
         manage_btn = wx.Button(self, label="Manage Custom...")
         ok_btn = wx.Button(self, wx.ID_OK)
         cancel_btn = wx.Button(self, wx.ID_CANCEL)
+        save_btn.SetName("Save as Preset, saves current settings as a new custom equalizer preset")
+        manage_btn.SetName("Manage Custom, opens dialog to delete custom equalizer presets")
+        ok_btn.SetName("OK, apply equalizer and close dialog")
+        cancel_btn.SetName("Cancel, close dialog without applying")
         save_btn.Bind(wx.EVT_BUTTON, self._on_save_as_preset)
         manage_btn.Bind(wx.EVT_BUTTON, self._on_manage_custom)
         btn_row.AddMany([
@@ -1018,6 +1072,8 @@ class RoomToneMatchDialog(wx.Dialog):
     def __init__(self, parent, track_names, track_durations):
         super().__init__(parent, title="Room Tone Match — SpeechCraft Studio",
                         size=(460, 430), style=wx.DEFAULT_DIALOG_STYLE)
+        # Accessible name: NVDA otherwise reads 'dialog'.
+        name_dialog(self, "Room Tone Match")
         self.track_names = track_names
         self.track_durations = track_durations
         self.selected_track = 0
@@ -1036,28 +1092,37 @@ class RoomToneMatchDialog(wx.Dialog):
         outer = wx.BoxSizer(wx.VERTICAL)
 
         # --- Reference Track ---
-        outer.Add(wx.StaticText(self, label="Reference track:"), 0, wx.ALL, 4)
+        track_label = wx.StaticText(self, label="Reference track:")
+        name_widget(track_label, "Reference track label")
+        outer.Add(track_label, 0, wx.ALL, 4)
         self.track_choice = wx.Choice(self)
         for name in self.track_names:
             self.track_choice.Append(name)
         self.track_choice.SetSelection(0)
+        self.track_choice.SetName("Reference track choice, lists tracks in the current project")
         self.track_choice.Bind(wx.EVT_CHOICE, self._on_track_change)
         outer.Add(self.track_choice, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
 
         # --- Reference Region ---
         reg_box = wx.StaticBox(self, label="Reference region (seconds)")
+        name_group(reg_box, "Reference region")
         reg_sizer = wx.StaticBoxSizer(reg_box, wx.HORIZONTAL)
         self.start_st = wx.StaticText(self, label="Start:")
         self.start_st.SetMinSize((50, -1))
+        name_widget(self.start_st, "Reference start label")
         self.start_tc = wx.TextCtrl(self, value="0.0", size=(70, -1),
                                     style=wx.TE_PROCESS_ENTER)
+        self.start_tc.SetName("Reference start time, in seconds")
         self.start_tc.Bind(wx.EVT_TEXT_ENTER, self._on_region_change)
         self.end_st = wx.StaticText(self, label="  End:")
         self.end_st.SetMinSize((40, -1))
+        name_widget(self.end_st, "Reference end label")
         self.end_tc = wx.TextCtrl(self, value="5.0", size=(70, -1),
                                   style=wx.TE_PROCESS_ENTER)
+        self.end_tc.SetName("Reference end time, in seconds")
         self.end_tc.Bind(wx.EVT_TEXT_ENTER, self._on_region_change)
         self.preview_btn = wx.Button(self, label="Preview")
+        self.preview_btn.SetName("Preview reference region, plays the selected audio region")
         self.preview_btn.Bind(wx.EVT_BUTTON, self._on_preview)
         reg_sizer.AddMany([
             (self.start_st, 0, wx.ALIGN_CENTER_VERTICAL),
@@ -1073,7 +1138,9 @@ class RoomToneMatchDialog(wx.Dialog):
         loop_box = wx.BoxSizer(wx.HORIZONTAL)
         loop_label = wx.StaticText(self, label="Number of loops:")
         loop_label.SetMinSize((130, -1))
+        name_widget(loop_label, "Number of loops label")
         self.loop_spin = wx.SpinCtrl(self, value="3", min=1, max=999, size=(70, -1))
+        self.loop_spin.SetName("Number of loops, between 1 and 999")
         loop_box.AddMany([
             (loop_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8),
             (self.loop_spin, 0),
@@ -1083,7 +1150,9 @@ class RoomToneMatchDialog(wx.Dialog):
         cf_box = wx.BoxSizer(wx.HORIZONTAL)
         cf_label = wx.StaticText(self, label="Crossfade duration (ms):")
         cf_label.SetMinSize((170, -1))
+        name_widget(cf_label, "Crossfade duration label")
         self.cf_spin = wx.SpinCtrl(self, value="100", min=0, max=2000, size=(70, -1))
+        self.cf_spin.SetName("Crossfade duration in milliseconds, between 0 and 2000")
         cf_box.AddMany([
             (cf_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8),
             (self.cf_spin, 0),
@@ -1094,7 +1163,9 @@ class RoomToneMatchDialog(wx.Dialog):
         name_box = wx.BoxSizer(wx.HORIZONTAL)
         name_label = wx.StaticText(self, label="New track name:")
         name_label.SetMinSize((130, -1))
+        name_widget(name_label, "New track name label")
         self.name_tc = wx.TextCtrl(self, value="Room Tone", size=(200, -1))
+        self.name_tc.SetName("New track name, used for the room-tone track added to the project")
         name_box.AddMany([
             (name_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8),
             (self.name_tc, 1, wx.EXPAND),
@@ -1105,8 +1176,13 @@ class RoomToneMatchDialog(wx.Dialog):
         lvl_box = wx.BoxSizer(wx.HORIZONTAL)
         lvl_label = wx.StaticText(self, label="Level (dB):")
         lvl_label.SetMinSize((130, -1))
+        name_widget(lvl_label, "Level label")
         self.lvl_slider = wx.Slider(self, value=-40, minValue=-80, maxValue=0,
                                     style=wx.SL_HORIZONTAL | wx.SL_LABELS, size=(200, -1))
+        self.lvl_slider.SetName(
+            "Level slider in decibels, between minus 80 and 0. "
+            "Lower values are quieter; the new track matches the room tone at this level."
+        )
         lvl_box.AddMany([
             (lvl_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8),
             (self.lvl_slider, 1, wx.EXPAND),
@@ -1118,6 +1194,11 @@ class RoomToneMatchDialog(wx.Dialog):
             "Tip: Select a region with only room ambiance (no speech). "
             "Use 3-5 loops to cover typical dialogue gaps. Keep the crossfade "
             "short (50-150 ms) to avoid audible seams."))
+        hint.SetName(
+            "Tip: Select a region with only room ambiance, no speech. "
+            "Use 3 to 5 loops for typical dialogue gaps. Keep the crossfade "
+            "short, 50 to 150 milliseconds, to avoid audible seams."
+        )
         hint.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
         hint.SetForegroundColour(wx.Colour(90, 90, 90))
         outer.Add(hint, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
@@ -1126,6 +1207,8 @@ class RoomToneMatchDialog(wx.Dialog):
         btn_row = wx.BoxSizer(wx.HORIZONTAL)
         cancel_btn = wx.Button(self, wx.ID_CANCEL)
         ok_btn = wx.Button(self, wx.ID_OK)
+        cancel_btn.SetName("Cancel, close dialog without creating the room-tone track")
+        ok_btn.SetName("OK, create the room-tone track and close dialog")
         ok_btn.SetDefault()
         btn_row.AddMany([
             ((1, 1), 1, wx.EXPAND),
@@ -1233,6 +1316,8 @@ class BatchProcessDialog(wx.Dialog):
     def __init__(self, parent):
         super().__init__(parent, title="Batch Process — SpeechCraft Studio",
                         size=(700, 550), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        # Accessible name: NVDA otherwise reads 'dialog'.
+        name_dialog(self, "Batch Process")
         self.input_folder = ""
         self.output_folder = ""
         self.effect_type = "compressor"
@@ -1249,6 +1334,7 @@ class BatchProcessDialog(wx.Dialog):
 
         # Notebook with 3 pages: Folder, Effect, Process
         self.notebook = wx.Notebook(self)
+        self.notebook.SetName("Batch process pages")
         self._page_folder()
         self._page_effect()
         self._page_process()
@@ -1259,6 +1345,9 @@ class BatchProcessDialog(wx.Dialog):
         self.cancel_btn = wx.Button(self, wx.ID_CANCEL)
         self.prev_btn = wx.Button(self, label="< Back")
         self.next_btn = wx.Button(self, label="Next >")
+        self.cancel_btn.SetName("Cancel, close dialog without running batch")
+        self.prev_btn.SetName("< Back, previous batch step")
+        self.next_btn.SetName("Next >, advance to next batch step")
         self.prev_btn.Bind(wx.EVT_BUTTON, self._on_prev)
         self.next_btn.Bind(wx.EVT_BUTTON, self._on_next)
         btn_row.AddMany([
@@ -1277,14 +1366,19 @@ class BatchProcessDialog(wx.Dialog):
     # ------------------------------------------------------------------
     def _page_folder(self):
         panel = wx.Panel(self.notebook)
+        panel.SetName("Folder selection page")
         sizer = wx.BoxSizer(wx.VERTICAL)
 
         # Input folder row
         in_row = wx.BoxSizer(wx.HORIZONTAL)
-        in_row.Add(wx.StaticText(panel, label="Input folder:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
+        in_label = wx.StaticText(panel, label="Input folder:")
+        name_widget(in_label, "Input folder label")
+        in_row.Add(in_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         self.in_path_st = wx.StaticText(panel, label="< not selected >")
+        self.in_path_st.SetName("Input folder path, currently not selected")
         self.in_path_st.SetForegroundColour(wx.Colour(100, 100, 100))
         in_browse = wx.Button(panel, label="Browse...")
+        in_browse.SetName("Browse for input folder")
         in_browse.Bind(wx.EVT_BUTTON, lambda e: self._browse_folder("input"))
         in_row.Add(self.in_path_st, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         in_row.Add(in_browse, 0)
@@ -1292,18 +1386,25 @@ class BatchProcessDialog(wx.Dialog):
 
         # Output folder row
         out_row = wx.BoxSizer(wx.HORIZONTAL)
-        out_row.Add(wx.StaticText(panel, label="Output folder:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
+        out_label = wx.StaticText(panel, label="Output folder:")
+        name_widget(out_label, "Output folder label")
+        out_row.Add(out_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         self.out_path_st = wx.StaticText(panel, label="< not selected >")
+        self.out_path_st.SetName("Output folder path, currently not selected")
         self.out_path_st.SetForegroundColour(wx.Colour(100, 100, 100))
         out_browse = wx.Button(panel, label="Browse...")
+        out_browse.SetName("Browse for output folder")
         out_browse.Bind(wx.EVT_BUTTON, lambda e: self._browse_folder("output"))
         out_row.Add(self.out_path_st, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         out_row.Add(out_browse, 0)
         sizer.Add(out_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
         # File list
-        sizer.Add(wx.StaticText(panel, label="Audio files found:"), 0, wx.LEFT | wx.BOTTOM, 4)
+        files_label = wx.StaticText(panel, label="Audio files found:")
+        name_widget(files_label, "Audio files found in input folder")
+        sizer.Add(files_label, 0, wx.LEFT | wx.BOTTOM, 4)
         self.file_list = wx.ListBox(panel, style=wx.LB_SINGLE)
+        self.file_list.SetName("Audio files list, populated after an input folder is chosen")
         sizer.Add(self.file_list, 1, wx.EXPAND | wx.ALL, 4)
 
         panel.SetSizerAndFit(sizer)
@@ -1348,14 +1449,18 @@ class BatchProcessDialog(wx.Dialog):
         # Lazy import: batch_processor pulls in audio_effects (Full-only).
         import batch_processor
         panel = wx.Panel(self.notebook)
+        panel.SetName("Effect selection page")
         sizer = wx.BoxSizer(wx.VERTICAL)
 
         # Effect type dropdown
         eff_row = wx.BoxSizer(wx.HORIZONTAL)
-        eff_row.Add(wx.StaticText(panel, label="Effect:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
+        eff_label = wx.StaticText(panel, label="Effect:")
+        name_widget(eff_label, "Effect type label")
+        eff_row.Add(eff_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         self.effect_choice = wx.Choice(panel, choices=[
             info["label"] for info in batch_processor.EFFECT_DEFINITIONS.values()
         ])
+        self.effect_choice.SetName("Effect type choice, choose compressor, equalizer, or breath smoothing")
         self.effect_choice.SetSelection(1)  # Default: Compressor
         self.effect_choice.Bind(wx.EVT_CHOICE, self._on_effect_changed)
         eff_row.Add(self.effect_choice, 1, wx.EXPAND)
@@ -1363,17 +1468,20 @@ class BatchProcessDialog(wx.Dialog):
 
         # Preset section (changes per effect)
         self.preset_box = wx.StaticBox(panel, label="Preset")
+        name_group(self.preset_box, "Preset")
         self.preset_sizer = wx.StaticBoxSizer(self.preset_box, wx.VERTICAL)
         sizer.Add(self.preset_sizer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
         # Advanced params section
         self.advanced_box = wx.StaticBox(panel, label="Parameters")
+        name_group(self.advanced_box, "Parameters")
         self.advanced_sizer = wx.StaticBoxSizer(self.advanced_box, wx.VERTICAL)
         self.param_ctrls = {}  # label -> slider
         sizer.Add(self.advanced_sizer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
         # Output suffix note
         self.suffix_st = wx.StaticText(panel, label="Output files: filename_processed.wav")
+        self.suffix_st.SetName("Output files naming convention: filename underscore processed dot wav")
         self.suffix_st.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_ITALIC, wx.FONTWEIGHT_NORMAL))
         sizer.Add(self.suffix_st, 0, wx.LEFT | wx.BOTTOM, 4)
 
@@ -1416,11 +1524,18 @@ class BatchProcessDialog(wx.Dialog):
                 style = wx.RB_GROUP if first else 0
                 first = False
                 radio = wx.RadioButton(self.preset_sizer.GetStaticBox(), label=name, style=style)
+                # Accessible name: include description so NVDA announces
+                # both name and what the preset does.
+                if "description" in data:
+                    radio.SetName(f"{name}. {data['description']}")
+                else:
+                    radio.SetName(name)
                 self.preset_radios[name] = radio
                 self.preset_sizer.Add(radio, 0, wx.ALL, 2)
                 if "description" in data:
                     desc = wx.StaticText(self.preset_sizer.GetStaticBox(),
                                          label=f"  {data['description']}")
+                    desc.SetName(f"Description for {name}: {data['description']}")
                     desc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
                     desc.SetForegroundColour(wx.Colour(80, 80, 80))
                     self.preset_sizer.Add(desc, 0, wx.LEFT | wx.BOTTOM, 2)
@@ -1514,10 +1629,17 @@ class BatchProcessDialog(wx.Dialog):
         for label, default, lo, hi, init in rows:
             row = wx.BoxSizer(wx.HORIZONTAL)
             st = wx.StaticText(self.advanced_sizer.GetStaticBox(), label=label)
+            name_widget(st, f"{label} parameter label")
             st.SetMinSize((170, -1))
             slider = wx.Slider(self.advanced_sizer.GetStaticBox(), value=int(init),
                                minValue=int(lo), maxValue=int(hi),
                                style=wx.SL_HORIZONTAL | wx.SL_LABELS)
+            # Accessible name: include range so NVDA knows what
+            # values are possible.
+            name_widget(
+                slider,
+                f"{label} slider, range {lo} to {hi}, currently {int(init)}",
+            )
             slider.SetMinSize((200, -1))
             row.Add(st, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
             row.Add(slider, 1, wx.EXPAND)
@@ -1536,18 +1658,23 @@ class BatchProcessDialog(wx.Dialog):
     # ------------------------------------------------------------------
     def _page_process(self):
         panel = wx.Panel(self.notebook)
+        panel.SetName("Process and results page")
         sizer = wx.BoxSizer(wx.VERTICAL)
 
         self.progress_gauge = wx.Gauge(panel, style=wx.GA_HORIZONTAL | wx.GA_SMOOTH)
+        self.progress_gauge.SetName("Batch processing progress, shows percent complete")
         sizer.Add(self.progress_gauge, 0, wx.EXPAND | wx.ALL, 8)
 
         self.progress_st = wx.StaticText(panel, label="Ready to process.")
+        self.progress_st.SetName("Processing status, currently ready to process")
         sizer.Add(self.progress_st, 0, wx.LEFT | wx.BOTTOM, 8)
 
         log_box = wx.StaticBox(panel, label="Results log")
+        name_group(log_box, "Results log")
         log_sizer = wx.StaticBoxSizer(log_box, wx.VERTICAL)
         self.log_ctrl = wx.TextCtrl(panel, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_WORDWRAP,
                                      size=(-1, 150))
+        self.log_ctrl.SetName("Results log, shows success and error messages for each file processed")
         log_sizer.Add(self.log_ctrl, 1, wx.EXPAND)
         sizer.Add(log_sizer, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 

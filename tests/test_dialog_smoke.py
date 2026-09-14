@@ -559,6 +559,183 @@ def test_breath_dialog_each_preset_radio_has_distinct_accessible_name(
         dlg.Destroy()
 
 
+# ---------------------------------------------------------------------------
+# Sweep: every dialog in the project must have meaningful accessible
+# names on every interactive control. Walks all 8 dialogs and applies
+# the same checks the per-dialog tests above do, but in one go so a
+# regression in any dialog is caught by one failing test.
+# ---------------------------------------------------------------------------
+
+
+def _walk_widgets(widget):
+    """Yield every widget in the tree rooted at ``widget``."""
+    yield widget
+    for child in widget.GetChildren():
+        yield from _walk_widgets(child)
+
+
+def _audit_dialog(dlg, *, dialog_name: str, allowed_no_name: set[type] | None = None):
+    """Return a list of accessibility problems found in ``dlg``.
+
+    Each problem is a human-readable string. An empty list means the
+    dialog passed the audit.
+
+    ``allowed_no_name`` lets the caller exempt specific widget classes
+    from the audit (e.g. plain Panels which never need an accessible
+    name).
+    """
+    import wx  # used here for type checks; only imported when wx is available
+
+    allowed_no_name = allowed_no_name or set()
+    bad_defaults = {
+        "dialog", "staticText", "radioButton", "check",
+        "slider", "choice", "text", "listBox", "button",
+        "gauge", "groupBox", "panel", "frame",
+    }
+    interactive_types = (wx.RadioButton, wx.Slider, wx.Button, wx.CheckBox)
+    problems: list[str] = []
+
+    for widget in _walk_widgets(dlg):
+        cls = type(widget)
+        if cls in allowed_no_name:
+            continue
+        if cls is wx.StaticBox and getattr(widget, "GetLabel", lambda: "")() == "":
+            # Empty StaticBox is just a layout container.
+            continue
+
+        name = widget.GetName()
+        try:
+            label = widget.GetLabel()
+        except Exception:
+            label = ""
+
+        if cls in interactive_types or (cls is wx.StaticText and label):
+            if name in bad_defaults:
+                problems.append(
+                    f"  [{dialog_name}] {cls.__name__} label={label!r:30}  "
+                    f"name={name!r:24}  (default; needs SetName)"
+                )
+            # Interactive controls: name should mention the visible
+            # label. Strip trailing ellipsis/dot punctuation since
+            # accessible names use commas instead.
+            if cls in interactive_types and label:
+                label_clean = label.rstrip(".…").rstrip()
+                if label_clean and label_clean not in name:
+                    problems.append(
+                        f"  [{dialog_name}] {cls.__name__} label={label!r:30}  "
+                        f"name={name!r:60}  (name doesn't mention label)"
+                    )
+
+    return problems
+
+
+@needs_wx
+def test_every_dialog_passes_accessibility_audit(wx_app: Any) -> None:
+    """Sweep: every dialog in the project must have meaningful
+    accessible names on every interactive control.
+
+    JAWS reads labels even when SetName is missing, so JAWS users
+    often don't notice these bugs. NVDA relies on SetName verbatim
+    and either announces "radioButton" / "slider" / "staticText"
+    (useless) or skips the control entirely. This test catches both.
+
+    Walks:
+    - BreathSmoothingPresetDialog  (done in v1 of this fix)
+    - EffectSettingsDialog
+    - CompressorPresetDialog
+    - EQPresetDialog
+    - RoomToneMatchDialog
+    - BatchProcessDialog
+    - RecordingDialog
+    - StudioRecordingDialog
+    """
+    import wx
+    from dialogs.effects_dialogs import (
+        EffectSettingsDialog,
+        BreathSmoothingPresetDialog,
+        CompressorPresetDialog,
+        EQPresetDialog,
+        RoomToneMatchDialog,
+        BatchProcessDialog,
+    )
+    from dialogs.recording_dialogs import (
+        RecordingDialog,
+        StudioRecordingDialog,
+    )
+
+    problems: list[str] = []
+
+    # EffectSettingsDialog takes (parent, title, params)
+    dlg = EffectSettingsDialog(
+        None,
+        title="Effect Settings",
+        params={"Threshold": (-20, -60, 0), "Ratio": 4, "Wet/Dry": 1.0},
+    )
+    try:
+        problems.extend(_audit_dialog(dlg, dialog_name="EffectSettingsDialog"))
+    finally:
+        dlg.Destroy()
+
+    # BreathSmoothingPresetDialog -- already audited per-dialog, but
+    # include in sweep for completeness.
+    dlg = BreathSmoothingPresetDialog(None)
+    try:
+        problems.extend(_audit_dialog(dlg, dialog_name="BreathSmoothingPresetDialog"))
+    finally:
+        dlg.Destroy()
+
+    # CompressorPresetDialog
+    dlg = CompressorPresetDialog(None)
+    try:
+        problems.extend(_audit_dialog(dlg, dialog_name="CompressorPresetDialog"))
+    finally:
+        dlg.Destroy()
+
+    # EQPresetDialog
+    dlg = EQPresetDialog(None)
+    try:
+        problems.extend(_audit_dialog(dlg, dialog_name="EQPresetDialog"))
+    finally:
+        dlg.Destroy()
+
+    # RoomToneMatchDialog takes (parent, track_names, track_durations)
+    dlg = RoomToneMatchDialog(
+        None,
+        track_names=["Track 1", "Track 2"],
+        track_durations=[10.0, 20.0],
+    )
+    try:
+        problems.extend(_audit_dialog(dlg, dialog_name="RoomToneMatchDialog"))
+    finally:
+        dlg.Destroy()
+
+    # BatchProcessDialog
+    dlg = BatchProcessDialog(None)
+    try:
+        problems.extend(_audit_dialog(dlg, dialog_name="BatchProcessDialog"))
+    finally:
+        dlg.Destroy()
+
+    # RecordingDialog
+    dlg = RecordingDialog(None, input_device_id=None)
+    try:
+        problems.extend(_audit_dialog(dlg, dialog_name="RecordingDialog"))
+    finally:
+        dlg.Destroy()
+
+    # StudioRecordingDialog takes script_lines
+    dlg = StudioRecordingDialog(None, script_lines=["line 1"])
+    try:
+        problems.extend(_audit_dialog(dlg, dialog_name="StudioRecordingDialog"))
+    finally:
+        dlg.Destroy()
+
+    assert not problems, (
+        "Accessibility problems found across dialogs:\n"
+        + "\n".join(problems)
+    )
+
+
 @needs_wx
 def test_breath_dialog_get_values_rms_thresh_inversely_proportional_to_sens(
     wx_app: Any,
