@@ -3,43 +3,73 @@ Breath Smoothing Module for Audio Processing
 
 Detects breath sounds in audio and softens them while maintaining naturalness.
 Uses RMS-based detection and lowpass filtering with fade crossfades.
+
+Note on Core vs Full builds
+----------------------------
+``scipy.signal`` is only bundled into the Full SpeechCraft build. The
+Core build excludes it to keep the EXE small. This module imports
+scipy *lazily* inside ``butter_lowpass`` rather than at module load,
+so the breath_smoothing module itself imports cleanly in Core. A
+Core user who tries to run breath smoothing sees a clear
+``ImportError`` at the point of use, with the underlying message
+"requires scipy (Full build only)". The auto-update / wizard can
+catch this and prompt the user to switch to Full in a future PR.
 """
 
 import sys
 from pydub import AudioSegment
 import numpy as np
-from scipy.signal import butter, lfilter
 
 
 def rms_frames(samples, frame_size, hop_size):
     """Calculate RMS (Root Mean Square) for audio frames.
-    
+
     Args:
         samples: Audio samples array
         frame_size: Size of each frame in samples
         hop_size: Hop size between frames in samples
-        
+
     Returns:
         Array of RMS values for each frame
     """
     rms = []
     for start in range(0, len(samples) - frame_size + 1, hop_size):
-        frame = samples[start:start+frame_size]
-        rms.append(np.sqrt(np.mean(frame.astype(np.float64)**2)))
+        frame = samples[start:start + frame_size]
+        rms.append(np.sqrt(np.mean(frame.astype(np.float64) ** 2)))
     return np.array(rms)
 
 
 def butter_lowpass(cutoff, fs, order=4):
     """Design a Butterworth lowpass filter.
-    
+
+    Lazy-imports scipy.signal here, not at module load, so the
+    breath_smoothing module itself imports cleanly in Core (which
+    doesn't bundle scipy). The first user who actually runs breath
+    smoothing in Core sees a clear ImportError naming scipy as
+    the missing dep -- far better than a confusing
+    "DummyModule missing feature" dialog.
+
     Args:
         cutoff: Cutoff frequency in Hz
         fs: Sampling frequency in Hz
         order: Filter order
-        
+
     Returns:
         Tuple of (b, a) filter coefficients
+
+    Raises:
+        ImportError: scipy is not installed (e.g. running the Core
+            build). The error message tells the user how to fix it.
     """
+    try:
+        from scipy.signal import butter
+    except ImportError as e:
+        raise ImportError(
+            "breath_smoothing requires scipy.signal.butter, which is "
+            "only available in the Full SpeechCraft build. Switch to "
+            "Full, or install scipy manually via "
+            "`pip install scipy`."
+        ) from e
     nyq = 0.5 * fs
     normal_cutoff = cutoff / nyq
     b, a = butter(order, normal_cutoff, btype='low', analog=False)
@@ -48,16 +78,28 @@ def butter_lowpass(cutoff, fs, order=4):
 
 def lowpass_filter(data, cutoff, fs, order=4):
     """Apply Butterworth lowpass filter to audio data.
-    
+
     Args:
         data: Audio samples
         cutoff: Cutoff frequency in Hz
         fs: Sampling frequency in Hz
         order: Filter order
-        
+
     Returns:
         Filtered audio samples
     """
+    # Lazy import so a Core build (no scipy) can still import the
+    # module -- only users who actually call lowpass_filter see the
+    # scipy error.
+    try:
+        from scipy.signal import lfilter
+    except ImportError as e:
+        raise ImportError(
+            "breath_smoothing requires scipy.signal.lfilter, which is "
+            "only available in the Full SpeechCraft build. Switch to "
+            "Full, or install scipy manually via "
+            "`pip install scipy`."
+        ) from e
     b, a = butter_lowpass(cutoff, fs, order=order)
     y = lfilter(b, a, data)
     return y

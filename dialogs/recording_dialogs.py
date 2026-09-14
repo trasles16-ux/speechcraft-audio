@@ -33,6 +33,10 @@ beyond what the dialog returns through ``ShowModal()``.
 
 import wx
 
+# Accessibility helpers. Same conventions as effects_dialogs.py so
+# every dialog in the project announces the same way to NVDA.
+from dialogs._a11y import name_dialog, name_group, name_widget
+
 
 # sounddevice and numpy are used by RecordingDialog.toggle_monitor (level
 # monitoring) and would raise NameError if either is genuinely missing or
@@ -91,54 +95,67 @@ class RecordingDialog(wx.Dialog):
     
     def __init__(self, parent, input_device_id=None):
         super().__init__(parent, title="Recording Setup", size=(400, 300))
-        
+        # Accessible name: NVDA otherwise reads 'dialog'.
+        name_dialog(self, "Recording Setup")
+
         self.input_device_id = input_device_id
         self.monitoring = False
         self.monitor_stream = None
-        
+
         self.init_ui()
-        
+
     def init_ui(self):
         vbox = wx.BoxSizer(wx.VERTICAL)
-        
+
         # Title
         title = wx.StaticText(self, label="Recording Level Monitor")
+        title.SetName("Recording Level Monitor heading")
         title_font = title.GetFont()
         title_font.SetPointSize(12)
         title_font.SetWeight(wx.FONTWEIGHT_BOLD)
         title.SetFont(title_font)
         vbox.Add(title, 0, wx.ALL | wx.ALIGN_CENTER, 10)
-        
+
         # Level monitor
         level_box = wx.StaticBox(self, label="Input Level")
+        name_group(level_box, "Input Level")
         level_sizer = wx.StaticBoxSizer(level_box, wx.VERTICAL)
-        
+
         self.level_gauge = wx.Gauge(self, range=100, style=wx.GA_HORIZONTAL, size=(-1, 25))
+        self.level_gauge.SetName("Input level gauge, 0 to 100 percent")
         level_sizer.Add(self.level_gauge, 0, wx.EXPAND | wx.ALL, 5)
-        
+
         self.level_text = wx.StaticText(self, label="Level: -∞ dB")
+        self.level_text.SetName("Input level readout in decibels, currently minus infinity")
         level_sizer.Add(self.level_text, 0, wx.ALL, 5)
-        
+
         self.monitor_btn = wx.Button(self, label="Start Level Monitor")
+        self.monitor_btn.SetName("Start Level Monitor, toggle input level metering")
         self.monitor_btn.Bind(wx.EVT_BUTTON, self.toggle_monitor)
         level_sizer.Add(self.monitor_btn, 0, wx.ALL, 5)
-        
+
         vbox.Add(level_sizer, 1, wx.EXPAND | wx.ALL, 10)
-        
+
         # Instructions
         instructions = wx.StaticText(self, label="Monitor your levels before recording.\nAim for -12dB to -6dB for optimal quality.")
+        instructions.SetName(
+            "Monitor your levels before recording. "
+            "Aim for minus 12 to minus 6 decibels for optimal quality."
+        )
         vbox.Add(instructions, 0, wx.ALL | wx.ALIGN_CENTER, 10)
-        
+
         # Buttons
         btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
         ok_btn = wx.Button(self, wx.ID_OK, label="Start Recording")
         cancel_btn = wx.Button(self, wx.ID_CANCEL, label="Cancel")
+        ok_btn.SetName("Start Recording, begin recording audio")
+        cancel_btn.SetName("Cancel, close dialog without recording")
         btn_sizer.Add(ok_btn, 0, wx.ALL, 5)
         btn_sizer.Add(cancel_btn, 0, wx.ALL, 5)
         vbox.Add(btn_sizer, 0, wx.ALIGN_CENTER | wx.ALL, 10)
-        
+
         self.SetSizer(vbox)
-        
+
         # Auto-start monitoring if device available
         if self.input_device_id is not None:
             wx.CallAfter(self.toggle_monitor, None)
@@ -211,8 +228,11 @@ class StudioRecordingDialog(wx.Dialog):
     
     def __init__(self, parent, script_lines, input_device_id=None, use_second_monitor=False, use_network_monitor=False):
         super().__init__(parent, title="Studio Recording - Director Control", size=(700, 600))
+        # Accessible name: NVDA otherwise reads 'dialog'.
+        name_dialog(self, "Studio Recording Director Control")
+
         self._destroyed = False
-        
+
         self.script_lines = script_lines
         self.input_device_id = input_device_id
         self.studio_recorder = None
@@ -221,7 +241,7 @@ class StudioRecordingDialog(wx.Dialog):
         self.use_network_monitor = use_network_monitor
         self.voice_actor_monitor = None
         self.network_server = None
-        
+
         self.init_ui()
         
         # Create voice actor monitor if requested
@@ -357,87 +377,106 @@ class StudioRecordingDialog(wx.Dialog):
         
     def init_ui(self):
         vbox = wx.BoxSizer(wx.VERTICAL)
-        
+
         # Title
         title = wx.StaticText(self, label="Director Control - Studio Recording")
+        title.SetName("Director Control, Studio Recording heading")
         title_font = title.GetFont()
         title_font.SetPointSize(14)
         title_font.SetWeight(wx.FONTWEIGHT_BOLD)
         title.SetFont(title_font)
         vbox.Add(title, 0, wx.ALL | wx.ALIGN_CENTER, 10)
-        
+
         # Audio controls for director
         audio_box = wx.StaticBox(self, label="Audio Controls")
+        name_group(audio_box, "Audio Controls")
         audio_sizer = wx.StaticBoxSizer(audio_box, wx.HORIZONTAL)
-        
+
         # Volume control
         vol_box = wx.BoxSizer(wx.VERTICAL)
-        vol_box.Add(wx.StaticText(self, label="Monitor Volume:"), 0, wx.ALL, 5)
+        vol_label = wx.StaticText(self, label="Monitor Volume:")
+        name_widget(vol_label, "Monitor volume label")
+        vol_box.Add(vol_label, 0, wx.ALL, 5)
         self.volume_slider = wx.Slider(self, value=80, minValue=0, maxValue=100, style=wx.SL_VERTICAL | wx.SL_LABELS)
+        self.volume_slider.SetName("Monitor volume slider, 0 to 100 percent")
         self.volume_slider.Bind(wx.EVT_SLIDER, self.on_volume_change)
         vol_box.Add(self.volume_slider, 1, wx.EXPAND | wx.ALL, 5)
         audio_sizer.Add(vol_box, 0, wx.EXPAND | wx.ALL, 5)
-        
+
         # Playback controls
         playback_box = wx.BoxSizer(wx.VERTICAL)
         self.play_btn = wx.Button(self, label="Play")
+        self.play_btn.SetName("Play, start playback of the current take")
         self.stop_btn = wx.Button(self, label="Stop")
+        self.stop_btn.SetName("Stop, halt playback")
         self.play_btn.Bind(wx.EVT_BUTTON, self.on_director_play)
         self.stop_btn.Bind(wx.EVT_BUTTON, self.on_director_stop)
         playback_box.Add(self.play_btn, 0, wx.EXPAND | wx.ALL, 5)
         playback_box.Add(self.stop_btn, 0, wx.EXPAND | wx.ALL, 5)
         audio_sizer.Add(playback_box, 0, wx.ALL, 5)
-        
+
         vbox.Add(audio_sizer, 0, wx.EXPAND | wx.ALL, 10)
-        
+
         # Redo trigger setting
         redo_box = wx.BoxSizer(wx.HORIZONTAL)
-        redo_box.Add(wx.StaticText(self, label="Redo trigger word:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 5)
+        redo_label = wx.StaticText(self, label="Redo trigger word:")
+        name_widget(redo_label, "Redo trigger word label")
+        redo_box.Add(redo_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 5)
         self.redo_word = wx.TextCtrl(self, value="oops", size=(100, -1))
+        self.redo_word.SetName("Redo trigger word, spoken to flag a take for redo")
         redo_box.Add(self.redo_word, 0, wx.ALL, 5)
         vbox.Add(redo_box, 0, wx.ALL, 5)
-        
+
         # Progress display
         progress_box = wx.StaticBox(self, label="Recording Progress")
+        name_group(progress_box, "Recording Progress")
         progress_sizer = wx.StaticBoxSizer(progress_box, wx.VERTICAL)
-        
+
         self.progress_gauge = wx.Gauge(self, range=100)
+        self.progress_gauge.SetName("Recording progress gauge, 0 to 100 percent")
         progress_sizer.Add(self.progress_gauge, 0, wx.EXPAND | wx.ALL, 5)
-        
+
         self.progress_text = wx.StaticText(self, label="Ready to start...")
+        self.progress_text.SetName("Recording progress text, currently ready to start")
         progress_sizer.Add(self.progress_text, 0, wx.ALL, 5)
-        
+
         vbox.Add(progress_sizer, 0, wx.EXPAND | wx.ALL, 10)
-        
+
         # Live transcription display
         trans_box = wx.StaticBox(self, label="Live Transcription")
+        name_group(trans_box, "Live Transcription")
         trans_sizer = wx.StaticBoxSizer(trans_box, wx.VERTICAL)
-        
+
         self.transcription_text = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY, size=(-1, 120))
+        self.transcription_text.SetName("Live transcription of the recording as it happens")
         trans_sizer.Add(self.transcription_text, 1, wx.EXPAND | wx.ALL, 5)
-        
+
         vbox.Add(trans_sizer, 1, wx.EXPAND | wx.ALL, 10)
-        
+
         # Control buttons
         btn_box = wx.BoxSizer(wx.HORIZONTAL)
-        
+
         self.start_btn = wx.Button(self, label="Start Recording")
+        self.start_btn.SetName("Start Recording, begin the recording session")
         self.start_btn.Bind(wx.EVT_BUTTON, self.on_start_recording)
         btn_box.Add(self.start_btn, 0, wx.ALL, 5)
-        
+
         self.redo_btn = wx.Button(self, label="Signal Redo")
+        self.redo_btn.SetName("Signal Redo, mark the current line for re-recording")
         self.redo_btn.Bind(wx.EVT_BUTTON, self.on_redo_line)
         self.redo_btn.Enable(False)
         btn_box.Add(self.redo_btn, 0, wx.ALL, 5)
-        
+
         self.stop_btn = wx.Button(self, label="Stop & Finish")
+        self.stop_btn.SetName("Stop & Finish, end the recording session")
         self.stop_btn.Bind(wx.EVT_BUTTON, self.on_stop_recording)
         self.stop_btn.Enable(False)
         btn_box.Add(self.stop_btn, 0, wx.ALL, 5)
-        
+
         btn_box.AddStretchSpacer()
-        
+
         cancel_btn = wx.Button(self, wx.ID_CANCEL, label="Cancel")
+        cancel_btn.SetName("Cancel, close dialog without ending the session normally")
         btn_box.Add(cancel_btn, 0, wx.ALL, 5)
         
         vbox.Add(btn_box, 0, wx.EXPAND | wx.ALL, 10)
