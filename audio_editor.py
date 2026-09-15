@@ -3159,6 +3159,22 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
             "Update Check Failed", wx.ICON_WARNING,
         )
 
+    def _no_installer_message(self, info) -> str:
+        """Human-readable explanation of why the update can't proceed.
+
+        A release with no SpeechCraft installer asset is a release-ops
+        gap (the EXE wasn't uploaded to the GitHub release), not a
+        user error. The message points at the fix and at the release
+        page so the user can still download manually.
+        """
+        return (
+            f"Release v{info.version} doesn't include a downloadable "
+            "installer.\n\n"
+            "This usually means the installer wasn't uploaded to the "
+            "GitHub release. You can still download it manually from:\n"
+            "https://github.com/trasles16-ux/speechcraft-audio/releases"
+        )
+
     def _run_update_download(self, info):
         from updater import (
             UpdateCheckError,
@@ -3171,7 +3187,7 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
         installer = info.find_installer()
         if installer is None:
             wx.MessageBox(
-                f"Release v{info.version} has no SpeechCraft installer asset.",
+                self._no_installer_message(info),
                 "Update Error", wx.ICON_ERROR,
             )
             return
