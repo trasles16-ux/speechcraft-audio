@@ -185,6 +185,12 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
 
         print("STARTING INIT")
         super().__init__(parent=None, title='SpeechCraft Studio', size=(1000, 800))
+        # Explicit accessible name so NVDA announces the window itself,
+        # not just the title. The title is "SpeechCraft Studio" but the
+        # name carries the role so a screen-reader user hears
+        # "SpeechCraft Studio, main window" on focus rather than an
+        # anonymous frame.
+        self.SetName("SpeechCraft Studio main window. An accessible audio editor for recording, transcription, and audio description work.")
 
         # Check FFmpeg before continuing
         progress("Preparing workspace", "Checking audio engine")
@@ -321,22 +327,29 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
 
     def init_ui(self):
         self.panel = wx.Panel(self)
+        self.panel.SetName("SpeechCraft main panel")
         self.main_sizer = wx.BoxSizer(wx.VERTICAL)
-        
+
         # REGION 1: Tracks (Timeline)
         self.tracks_label = wx.StaticText(self.panel, label="Region 1: Tracks (Timeline)")
+        self.tracks_label.SetName("Tracks timeline region label")
         self.tracks_list = wx.ListBox(self.panel, style=wx.LB_SINGLE)
+        self.tracks_list.SetName("Audio tracks list. Press arrow keys to move between tracks, Enter to select.")
         self.tracks_list.Bind(wx.EVT_KEY_DOWN, self.on_tracks_key_down)
 
         # REGION 2: Workspace (Transcript)
         self.workspace_label = wx.StaticText(self.panel, label="Region 2: Transcript Workspace")
+        self.workspace_label.SetName("Transcript workspace region label")
         self.workspace = wx.TextCtrl(self.panel, style=wx.TE_MULTILINE | wx.TE_RICH2)
+        self.workspace.SetName("Transcript workspace. Edit text here to drive word-aligned audio changes.")
         self.workspace.Bind(wx.EVT_TEXT, self.on_text_changed)
         self.workspace.Bind(wx.EVT_KEY_DOWN, self.on_workspace_key_down)
-        
+
         # REGION 3: Log Area (For transcription output and status)
         self.log_label = wx.StaticText(self.panel, label="Region 3: Process Logs and Output")
+        self.log_label.SetName("Process logs region label")
         self.log_area = wx.TextCtrl(self.panel, style=wx.TE_MULTILINE | wx.TE_READONLY)
+        self.log_area.SetName("Process log output. Read-only transcription and status messages.")
 
         self.main_sizer.Add(self.tracks_label, 0, wx.ALL, 5)
         self.main_sizer.Add(self.tracks_list, 1, wx.EXPAND | wx.ALL, 5)
@@ -2387,33 +2400,47 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
     def on_audio_setup(self, event):
         # Advanced Audio Setup Dialog with Level Monitoring
         dlg = wx.Dialog(self, title="Advanced Audio Setup", size=(500, 650))
+        dlg.SetName("Advanced audio setup dialog. Choose audio engine, input and output devices, and test them.")
         vbox = wx.BoxSizer(wx.VERTICAL)
         
         # Engine Choice
-        vbox.Add(wx.StaticText(dlg, label="Audio Engine:"), 0, wx.ALL, 5)
+        engine_label = wx.StaticText(dlg, label="Audio Engine:")
+        engine_label.SetName("Audio engine label")
+        vbox.Add(engine_label, 0, wx.ALL, 5)
         engine_cb = wx.ComboBox(dlg, choices=["SoundDevice (WASAPI/MME)", "PyAudio (Compatibility)", "Custom ASIO (Ultra-Low Latency)"], style=wx.CB_READONLY)
+        engine_cb.SetName("Audio engine selection. Options: SoundDevice WASAPI or MME, PyAudio compatibility, or Custom ASIO for ultra-low latency.")
         engine_cb.SetSelection(0 if self.audio_engine == "sounddevice" else 1)
         vbox.Add(engine_cb, 0, wx.EXPAND | wx.ALL, 5)
         
         # Output Device
-        vbox.Add(wx.StaticText(dlg, label="Output Device (Playback):"), 0, wx.ALL, 5)
+        output_label = wx.StaticText(dlg, label="Output Device (Playback):")
+        output_label.SetName("Output device label")
+        vbox.Add(output_label, 0, wx.ALL, 5)
         output_cb = wx.ComboBox(dlg, style=wx.CB_READONLY)
+        output_cb.SetName("Playback output device selection")
         
         # Input Device
-        vbox.Add(wx.StaticText(dlg, label="Input Device (Microphone):"), 0, wx.ALL, 5)
+        input_label = wx.StaticText(dlg, label="Input Device (Microphone):")
+        input_label.SetName("Input device label")
+        vbox.Add(input_label, 0, wx.ALL, 5)
         input_cb = wx.ComboBox(dlg, style=wx.CB_READONLY)
+        input_cb.SetName("Microphone input device selection")
         
         # Recording Level Monitor
         level_box = wx.StaticBox(dlg, label="Recording Level Monitor")
+        level_box.SetName("Recording level monitor group")
         level_sizer = wx.StaticBoxSizer(level_box, wx.VERTICAL)
         
         level_gauge = wx.Gauge(dlg, range=100, style=wx.GA_HORIZONTAL)
+        level_gauge.SetName("Microphone level gauge. Shows current input level as a percentage from quiet to loud.")
         level_sizer.Add(level_gauge, 0, wx.EXPAND | wx.ALL, 5)
         
         level_text = wx.StaticText(dlg, label="Level: -∞ dB")
+        level_text.SetName("Microphone level in decibels, updating live while the monitor is running")
         level_sizer.Add(level_text, 0, wx.ALL, 5)
         
         monitor_btn = wx.Button(dlg, label="Start Level Monitor")
+        monitor_btn.SetName("Toggle the live microphone level monitor. Currently stopped.")
         level_sizer.Add(monitor_btn, 0, wx.ALL, 5)
         
         vbox.Add(level_sizer, 0, wx.EXPAND | wx.ALL, 10)
@@ -2540,6 +2567,7 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
                     
                     monitoring[0] = True
                     monitor_btn.SetLabel("Stop Level Monitor")
+                    monitor_btn.SetName("Toggle the live microphone level monitor. Currently running — click to stop.")
                     
                 except Exception as ex:
                     wx.MessageBox(f"Failed to start level monitor: {ex}", "Error", wx.ICON_ERROR)
@@ -2555,6 +2583,7 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
                     
                 monitoring[0] = False
                 monitor_btn.SetLabel("Start Level Monitor")
+                monitor_btn.SetName("Toggle the live microphone level monitor. Currently stopped.")
                 level_gauge.SetValue(0)
                 level_text.SetLabel("Level: -∞ dB")
         
@@ -2575,7 +2604,9 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
         # Tools
         btn_box = wx.BoxSizer(wx.HORIZONTAL)
         test_out_btn = wx.Button(dlg, label="Test Output")
+        test_out_btn.SetName("Play a short test tone through the selected output device to verify playback")
         test_in_btn = wx.Button(dlg, label="Test Input")
+        test_in_btn.SetName("Record a two-second test from the selected microphone and play it back on the output device")
         btn_box.Add(test_out_btn, 1, wx.ALL, 5)
         btn_box.Add(test_in_btn, 1, wx.ALL, 5)
         vbox.Add(btn_box, 0, wx.EXPAND)
@@ -2633,6 +2664,7 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
         
         vbox.AddStretchSpacer()
         ok_btn = wx.Button(dlg, wx.ID_OK, label="Apply Settings")
+        ok_btn.SetName("Apply the audio engine and device selections and close the dialog")
         vbox.Add(ok_btn, 0, wx.ALIGN_CENTER | wx.ALL, 10)
         
         dlg.SetSizer(vbox)
