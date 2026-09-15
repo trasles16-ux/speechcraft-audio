@@ -126,6 +126,62 @@ def test_find_installer_returns_none_when_absent():
     assert info.find_installer() is None
 
 
+def test_download_creates_missing_staging_dir(tmp_path):
+    """Regression: download_with_progress must create the destination
+    directory if it doesn't exist. On a fresh install the staging
+    folder (%LOCALAPPDATA%\\SpeechCraft\\updates) is absent, so the
+    previous open() raised FileNotFoundError and the update died with
+    '[Errno 2] No such file or directory'.
+
+    We stand up a tiny local HTTP server that serves a few bytes, then
+    point the downloader at a path whose parent doesn't exist yet.
+    """
+    import http.server
+    import threading
+
+    # Serve the bytes from a temp file over a real local socket so the
+    # urllib code path is exercised for real (no mocks).
+    src = tmp_path / "serve" / "setup.exe"
+    src.parent.mkdir()
+    payload = b"A" * 2048
+    src.write_bytes(payload)
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args):
+            pass  # keep test output clean
+
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    port = httpd.server_address[1]
+    server_thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    server_thread.start()
+
+    try:
+        # Destination lives under a NON-EXISTING nested dir.
+        dest = tmp_path / "updates" / "speechcraft" / "SpeechCraft-Setup-1.3.0.exe"
+        assert not dest.parent.exists()  # precondition
+
+        result = download_with_progress(
+            f"http://127.0.0.1:{port}/setup.exe",
+            str(dest),
+        )
+
+        assert result == str(dest)
+        # The dir now exists and holds the full payload
+        assert dest.parent.exists()
+        assert dest.read_bytes() == payload
+        # No leftover .part
+        assert not (tmp_path / "updates" / "speechcraft" / "SpeechCraft-Setup-1.3.0.exe.part").exists()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 def test_sha256_of_file_roundtrip(tmp_path):
     p = tmp_path / "blob.bin"
     p.write_bytes(b"hello world")
