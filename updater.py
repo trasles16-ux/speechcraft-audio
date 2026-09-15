@@ -282,6 +282,10 @@ def download_with_progress(
         with urllib.request.urlopen(req, timeout=timeout_s) as resp:
             total = int(resp.headers.get("Content-Length") or 0)
             tmp_path = dest_path + ".part"
+            # Ensure the destination directory exists. On a fresh install
+            # the staging folder (%LOCALAPPDATA%\SpeechCraft\updates\) may
+            # not exist yet, so open() would raise FileNotFoundError.
+            os.makedirs(os.path.dirname(dest_path) or ".", exist_ok=True)
             downloaded = 0
             with open(tmp_path, "wb") as fh:
                 while True:
