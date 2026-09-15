@@ -4,6 +4,10 @@ All notable changes to SpeechCraft Audio are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Auto-update crashed on first run after install**: the installer staging folder (`%LOCALAPPDATA%\SpeechCraft\updates\`) doesn't exist on a fresh install, so the download raised `FileNotFoundError` (`[Errno 2] No such file or directory`). `download_with_progress` now creates the destination directory before writing.
+- **Misleading "Update Error" dialog** when a release has no installer asset — the message now explains it's a release-ops gap and links to the GitHub release page for a manual download.
+
 ## [1.3.0] — 2026-09-14
 
 ### Added
