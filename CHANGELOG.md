@@ -14,6 +14,7 @@ All notable changes to SpeechCraft Audio are documented here. The format follows
 - **`feature_manager.py`** — SHA-verified asset registry + download layer for feature models (Piper TTS voices, faster-whisper ASR models). Assets install to `PREFS_DIR/feature_assets/`, state lives in `PREFS_DIR/feature_state.json`, both written atomically with `.part` + `os.replace`. All Piper voices are `en_GB` (Cori/Alan) — the dead `en_ZA` URLs are gone.
 - **`feature_toggling.py`** — pure gate-decision layer. Given `FeatureFlags` + feature state, decides per-feature "enabled / needs-download / not-downloadable" so the menu bar, wizard, and engines all agree.
 - **Menu gating** — `create_menus` captures the feature-dependent items; `_apply_feature_gates()` disables (not hides) off-flag items so the layout stays stable and NVDA skips them cleanly.
+- **Main-frame accessibility** — `audio_editor.py` gained `SetName()` on the frame, main panel, all three region labels, the tracks list, the transcript workspace, the log area, and every control in the inline Audio Setup dialog (engine/output/input comboboxes, level gauge, dB readout, monitor toggle, Test Output / Test Input / Apply buttons). NVDA now announces each control by a meaningful name instead of its wxPython default.
 
 ### Changed
 - First-launch onboarding now uses the wizard (auto-shows when `wizard_completed=False`). The v1.2.0 `OnboardingDialog` and its `Core` / `Full` choice are removed.
@@ -23,8 +24,8 @@ All notable changes to SpeechCraft Audio are documented here. The format follows
 - **NSIS installer** — `DisplayVersion` corrected from `1.1.0` to `1.3.0`, edition-choice text reframed for v1.3.0 semantics (Core = on-demand model downloads, Full = all models pre-bundled), `ReadMe.txt` bundled and shown on the finish page, uninstaller now cleans `%APPDATA%\SpeechCraft\feature_assets` while keeping the user's `setup.json`.
 
 ### Tests
-- 81 new tests across the v1.3.0 PRs: `tests/test_feature_flags.py` (20 pure-logic), `tests/test_prefs.py` (10 pure-logic), `tests/test_setup_wizard.py` (21 — incl. 6-page wizard + download-page smoke), `tests/test_feature_manager.py` (26 pure-logic), `tests/test_feature_toggling.py` (18 pure-logic), `tests/test_menu_gating.py` (7 wx), `tests/test_engine_wiring.py` (6 pure-logic), `tests/test_setup_wizard_download_page.py` (5 wx).
-- Total: **261 passing**.
+- 81 new tests across the v1.3.0 PRs: `tests/test_feature_flags.py` (20 pure-logic), `tests/test_prefs.py` (10 pure-logic), `tests/test_setup_wizard.py` (21 — incl. 6-page wizard + download-page smoke), `tests/test_feature_manager.py` (26 pure-logic), `tests/test_feature_toggling.py` (18 pure-logic), `tests/test_menu_gating.py` (7 wx), `tests/test_engine_wiring.py` (6 pure-logic), `tests/test_setup_wizard_download_page.py` (5 wx), `tests/test_a11y_main_frame.py` (2 wx — main-frame + audio-setup dialog names pinned).
+- Total: **263 passing**.
 
 ### Installer
 - `installer/speechcraft_setup.nsi` + `installer/ReadMe.txt` — v1.3.0 feature-flag installer (Core/Full edition choice, SHA-verified model downloads, clean uninstall of downloaded assets while preserving user prefs).
