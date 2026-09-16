@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import wx
 
@@ -124,6 +124,7 @@ class WelcomePage(_WizardPage):
             wx.Font(18, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
         )
         title.SetName("Welcome to SpeechCraft Studio, heading")
+        self._heading = title
         self._sizer.Add(title, 0, wx.ALL, 16)
 
         intro = wx.StaticText(
@@ -161,6 +162,7 @@ class EditingFeaturesPage(_WizardPage):
     def __init__(self, parent: wx.Window, *, flags: FeatureFlags) -> None:
         self._flags = flags
         self.checkboxes: dict[str, wx.CheckBox] = {}
+        self._descriptions: dict[str, wx.StaticText] = {}
         self._has_state = True  # see _save_current_page in setup_wizard.py
         super().__init__(parent, name="Editing features")
 
@@ -170,6 +172,7 @@ class EditingFeaturesPage(_WizardPage):
             wx.Font(16, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
         )
         title.SetName("Editing features, heading")
+        self._heading = title
         self._sizer.Add(title, 0, wx.ALL, 16)
 
         foundation = wx.StaticText(
@@ -199,7 +202,8 @@ class EditingFeaturesPage(_WizardPage):
             self._sizer.Add(cb, 0, wx.LEFT | wx.RIGHT, 24)
 
             desc = wx.StaticText(self, label=FEATURE_DESCRIPTIONS[name])
-            desc.SetName(f"{_humanize(name)} description")
+            desc.SetName(FEATURE_DESCRIPTIONS[name])
+            self._descriptions[name] = desc
             desc.SetForegroundColour(wx.Colour(80, 80, 80))
             desc.Wrap(520)
             self._sizer.Add(desc, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 24)
@@ -218,6 +222,7 @@ class TTSEnginesPage(_WizardPage):
     def __init__(self, parent: wx.Window, *, flags: FeatureFlags) -> None:
         self._flags = flags
         self.checkboxes: dict[str, wx.CheckBox] = {}
+        self._descriptions: dict[str, wx.StaticText] = {}
         self._has_state = True  # see _save_current_page in setup_wizard.py
         super().__init__(parent, name="Text-to-speech engines")
 
@@ -227,6 +232,7 @@ class TTSEnginesPage(_WizardPage):
             wx.Font(16, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
         )
         title.SetName("Text-to-speech engines, heading")
+        self._heading = title
         self._sizer.Add(title, 0, wx.ALL, 16)
 
         intro = wx.StaticText(
@@ -252,7 +258,8 @@ class TTSEnginesPage(_WizardPage):
             self._sizer.Add(cb, 0, wx.LEFT | wx.RIGHT, 24)
 
             desc = wx.StaticText(self, label=FEATURE_DESCRIPTIONS[name])
-            desc.SetName(f"{_humanize(name)} description")
+            desc.SetName(FEATURE_DESCRIPTIONS[name])
+            self._descriptions[name] = desc
             desc.SetForegroundColour(wx.Colour(80, 80, 80))
             desc.Wrap(520)
             self._sizer.Add(desc, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 24)
@@ -287,15 +294,101 @@ class DownloadPage(_WizardPage):
         self,
         parent: wx.Window,
         *,
-        flags: FeatureFlags,
+        flags: FeatureFlags | None = None,
+        flags_provider: Callable[[], FeatureFlags] | None = None,
         state_file: Path | None = None,
     ) -> None:
-        self._flags = flags
+        # ``flags_provider`` is preferred over a static ``flags``
+        # snapshot: the wizard's live flag state changes as the user
+        # toggles checkboxes on the Editing / TTS pages, and the
+        # download list must reflect those choices. If no provider is
+        # supplied, we fall back to a constant provider returning the
+        # static ``flags`` (for tests).
+        if flags_provider is not None:
+            self._flags_provider = flags_provider
+        else:
+            static = flags if flags is not None else FeatureFlags()
+
+            def _static_provider() -> FeatureFlags:
+                return static
+
+            self._flags_provider = _static_provider
+        self._flags = self._flags_provider()
         self._state_file = state_file
         self._workers: list[threading.Thread] = []
         self._rows: list[dict] = []
+        # Container that gets rebuilt on every refresh
+        self._list_holder: wx.Panel | None = None
+        self._dl_all: wx.Button | None = None
+        self._empty_label: wx.StaticText | None = None
         self._has_state = True
         super().__init__(parent, name="Download ready")
+
+    def refresh(self) -> None:
+        """Rebuild the download list from the live flags.
+
+        Called by the wizard on page-navigation so the list reflects
+        the user's most recent checkbox choices, not the flags that
+        happened to be on disk when the wizard dialog was constructed.
+        """
+        self._flags = self._flags_provider()
+        if self._list_holder is None:
+            return
+        # Destroy old rows + button
+        for row in self._rows:
+            for key in ("gauge", "status", "button", "cancel"):
+                ctrl = row.get(key)
+                if ctrl is not None:
+                    ctrl.Destroy()
+        self._rows.clear()
+        if self._dl_all is not None:
+            self._dl_all.Destroy()
+            self._dl_all = None
+        if self._empty_label is not None:
+            self._empty_label.Destroy()
+            self._empty_label = None
+        # Clear the holder sizer (wxPython 4.x Clear has no kwarg)
+        from feature_toggling import build_gates, gates_to_download_list
+
+        holder = self._list_holder
+        holder_sizer = holder.GetSizer()
+        if holder_sizer is not None:
+            holder_sizer.Clear()
+
+        gates = build_gates(self._flags, state_file=self._state_file)
+        dl_list = gates_to_download_list(gates)
+
+        if not dl_list:
+            self._empty_label = wx.StaticText(
+                holder,
+                label=(
+                    "Everything you chose is ready. Nothing to download.\n"
+                    "You can change your feature choices on the "
+                    "Editing features and TTS engines pages."
+                ),
+            )
+            self._empty_label.SetName(
+                "All selected features are ready, nothing to download. "
+                "You can change your feature choices on the previous pages."
+            )
+            holder_sizer.Add(
+                self._empty_label, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 16
+            )
+            holder_sizer.AddStretchSpacer(1)
+        else:
+            self._dl_all = wx.Button(holder, wx.ID_ANY, "Download all")
+            self._dl_all.SetName("Download all missing models")
+            self._dl_all.Bind(wx.EVT_BUTTON, self._on_download_all)
+            holder_sizer.Add(self._dl_all, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+
+            for feature, asset_name in dl_list:
+                row = self._build_row_in_holder(holder, feature, asset_name)
+                self._rows.append(row)
+
+            holder_sizer.AddStretchSpacer(1)
+
+        holder_sizer.Layout()
+        self.Layout()
 
     def _build_ui(self) -> None:
         from feature_toggling import build_gates, gates_to_download_list
@@ -305,6 +398,7 @@ class DownloadPage(_WizardPage):
             wx.Font(16, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
         )
         title.SetName("Download ready, heading")
+        self._heading = title
         self._sizer.Add(title, 0, wx.ALL, 16)
 
         intro = wx.StaticText(
@@ -313,7 +407,9 @@ class DownloadPage(_WizardPage):
                 "Some of the features you chose download model files "
                 "on first use. Download them now so they're ready to "
                 "go. You can skip this and come back later from the "
-                "wizard (Help, Personalise SpeechCraft)."
+                "wizard (Help, Personalise SpeechCraft). If the list "
+                "looks empty, go back and check the Editing features "
+                "and TTS engines pages."
             ),
         )
         intro.SetName(
@@ -321,32 +417,19 @@ class DownloadPage(_WizardPage):
             "download later from the wizard."
         )
         intro.Wrap(560)
-        self._sizer.Add(intro, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 16)
+        self._sizer.Add(intro, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
-        gates = build_gates(self._flags, state_file=self._state_file)
-        dl_list = gates_to_download_list(gates)
+        # Live-rebuilding holder panel
+        self._list_holder = wx.Panel(self)
+        holder_sizer = wx.BoxSizer(wx.VERTICAL)
+        self._list_holder.SetSizer(holder_sizer)
+        self._sizer.Add(self._list_holder, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
-        if not dl_list:
-            empty = wx.StaticText(
-                self, label="Everything you chose is ready. Nothing to download."
-            )
-            empty.SetName("All selected features are ready, nothing to download.")
-            self._sizer.Add(empty, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 16)
-            self._sizer.AddStretchSpacer(1)
-            return
+        # Populate on first show
+        self.refresh()
 
-        self._dl_all = wx.Button(self, wx.ID_ANY, "Download all")
-        self._dl_all.SetName("Download all missing models")
-        self._dl_all.Bind(wx.EVT_BUTTON, self._on_download_all)
-        self._sizer.Add(self._dl_all, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
-
-        for feature, asset_name in dl_list:
-            row = self._build_row(feature, asset_name)
-            self._rows.append(row)
-
-        self._sizer.AddStretchSpacer(1)
-
-    def _build_row(self, feature: str, asset_name: str) -> dict:
+    def _build_row_in_holder(self, holder: wx.Panel, feature: str, asset_name: str) -> dict:
+        """Build one download row inside ``holder`` (the live list panel)."""
         from feature_manager import (
             get_asset,
             is_downloadable,
@@ -356,27 +439,27 @@ class DownloadPage(_WizardPage):
         asset = get_asset(feature, asset_name)
         row_sizer = wx.BoxSizer(wx.VERTICAL)
 
-        desc = wx.StaticText(self, label=asset.description or asset.key)
+        desc = wx.StaticText(holder, label=asset.description or asset.key)
         desc.SetName(f"{asset.key} description")
         row_sizer.Add(desc, 0, wx.LEFT | wx.RIGHT | wx.TOP, 8)
 
         hz = wx.BoxSizer(wx.HORIZONTAL)
-        gauge = wx.Gauge(self, range=100, size=(200, 20))
+        gauge = wx.Gauge(holder, range=100, size=(200, 20))
         gauge.SetName(f"{asset.key} download progress")
         hz.Add(gauge, 0, wx.RIGHT, 8)
 
-        status = wx.StaticText(self, label="Not downloaded")
+        status = wx.StaticText(holder, label="Not downloaded")
         status.SetName(f"{asset.key} status")
         hz.Add(status, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
 
-        btn = wx.Button(self, wx.ID_ANY, "Download")
+        btn = wx.Button(holder, wx.ID_ANY, "Download")
         btn.SetName(f"Download {asset.key}")
         if not is_downloadable(feature, asset_name):
             btn.Disable()
         hz.Add(btn, 0)
         row_sizer.Add(hz, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
-        cancel = wx.Button(self, wx.ID_ANY, "Cancel")
+        cancel = wx.Button(holder, wx.ID_ANY, "Cancel")
         cancel.SetName(f"Cancel download of {asset.key}")
         cancel.Hide()
         cancel.Bind(
@@ -385,7 +468,7 @@ class DownloadPage(_WizardPage):
         )
         row_sizer.Add(cancel, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
-        self._sizer.Add(row_sizer, 0, wx.EXPAND)
+        (holder.GetSizer()).Add(row_sizer, 0, wx.EXPAND)
 
         cancel_event = threading.Event()
         return {
@@ -494,6 +577,7 @@ class DataLocationPage(_WizardPage):
             wx.Font(16, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
         )
         title.SetName("Where your files live, heading")
+        self._heading = title
         self._sizer.Add(title, 0, wx.ALL, 16)
 
         intro = wx.StaticText(
@@ -587,6 +671,7 @@ class SummaryPage(_WizardPage):
             wx.Font(16, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
         )
         title.SetName("Summary, heading")
+        self._heading = title
         self._sizer.Add(title, 0, wx.ALL, 16)
 
         body = wx.StaticText(self, label=self._render_text())

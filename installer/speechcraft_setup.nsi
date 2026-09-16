@@ -5,13 +5,15 @@
 ;   1. Welcome page
 ;   2. License page (MIT)
 ;   3. Custom edition-choice page (Core vs Full)
-;   4. InstallFiles (extracts Core + optionally Full to $INSTDIR)
+;   4. InstallFiles (extracts ONLY the chosen edition to $INSTDIR)
 ;   5. Finish page
 ;
-; Both EXEs are bundled into the installer at COMPILE time (inside the
-; Section, where File directives are valid). At RUNTIME, the install
-; just runs. The .onInstSuccess / .onInstFailed callbacks run AFTER
-; install completes; they only do registry + shortcut bookkeeping.
+; Only the chosen EXE is installed - a Full install physically contains
+; only the Full binary and a Core install only the Core binary. The
+; choice is persisted to %APPDATA%\SpeechCraft\PreferredBundle.txt and
+; an edition-specific ReadMe.txt is generated that describes the edition
+; actually installed. The app ingests the sidecar on first launch
+; (prefs.merge_installer_edition).
 
 ; ==================== CONFIG ====================
 Unicode True
@@ -20,12 +22,12 @@ InstallDir "$PROGRAMFILES64\SpeechCraft Studio"
 InstallDirRegKey HKLM "Software\SpeechCraft\Studio" "InstallDir"
 SetCompressor /SOLID lzma
 SetOverwrite on
-VIProductVersion "1.3.0.0"
+VIProductVersion "1.3.3.0"
 VIAddVersionKey "ProductName" "SpeechCraft Studio"
 VIAddVersionKey "CompanyName" "Tracy Smith Consulting"
 VIAddVersionKey "LegalCopyright" "Tracy Smith 2026 (MIT)"
 VIAddVersionKey "FileDescription" "Accessible Audio Editor"
-VIAddVersionKey "FileVersion" "1.3.0"
+VIAddVersionKey "FileVersion" "1.3.3"
 
 Name "SpeechCraft Studio"
 
@@ -38,6 +40,7 @@ Var BundleChoice
 Var Dialog
 Var CoreRadio
 Var FullRadio
+Var HndSidecar
 
 ; ==================== INCLUDES ====================
 !include "MUI2.nsh"
@@ -46,8 +49,8 @@ Var FullRadio
 !include "x64.nsh"
 
 ; ==================== PAGE SEQUENCE ====================
-!define MUI_WELCOMEPAGE_TITLE "Welcome to SpeechCraft Studio 1.3.0"
-!define MUI_WELCOMEPAGE_TEXT "This wizard installs SpeechCraft Studio v1.3.0 on your computer. SpeechCraft Studio is an accessible audio editor. You'll be asked to pick an edition on the next page: Core (small install, models downloaded on demand) or Full (all models bundled, works offline out of the box). Click Next to continue."
+!define MUI_WELCOMEPAGE_TITLE "Welcome to SpeechCraft Studio 1.3.3"
+!define MUI_WELCOMEPAGE_TEXT "This wizard installs SpeechCraft Studio v1.3.3 on your computer. SpeechCraft Studio is an accessible audio editor. You'll be asked to pick an edition on the next page: Core (small install, models downloaded on demand) or Full (all models bundled, works offline out of the box). Click Next to continue."
 !insertmacro MUI_PAGE_WELCOME
 
 !insertmacro MUI_PAGE_LICENSE "LICENSE.txt"
@@ -57,12 +60,8 @@ Page custom BundlePage_Create BundlePage_Leave
 !insertmacro MUI_PAGE_INSTFILES
 
 !define MUI_FINISHPAGE_TITLE "Installation complete"
-!define MUI_FINISHPAGE_TEXT "SpeechCraft Studio 1.3.0 is now installed. Tick the checkboxes below to open the install folder and/or launch SpeechCraft Studio."
-; "Launch" button on finish page — points at the EXE matching the
-; edition the user picked on the bundle-choice page. Without this
-; override, NSIS tries $INSTDIR\<Name>.exe which is
-; "SpeechCraft Studio.exe" (with a space) — doesn't exist, so the
-; launcher pops "this app can't run on your PC".
+!define MUI_FINISHPAGE_TEXT "SpeechCraft Studio 1.3.3 is now installed. Tick the checkboxes below to open the install folder and/or launch SpeechCraft Studio."
+; "Launch" button on finish page - points at the single installed EXE.
 !define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_TEXT "Launch SpeechCraft Studio"
 !define MUI_FINISHPAGE_RUN_NOTCHECKED
@@ -73,17 +72,10 @@ Page custom BundlePage_Create BundlePage_Leave
 !insertmacro MUI_PAGE_FINISH
 
 ; ==================== LAUNCH AFTER INSTALL ====================
-; Points at the EXE matching the edition the user picked on the
-; bundle-choice page. Without this override, NSIS tries
-; $INSTDIR\<Name>.exe which is "SpeechCraft Studio.exe" (with a
-; space) — doesn't exist, so the launcher pops "this app can't run
-; on your PC".
+; Both editions install to the same filename, so the launcher is
+; always $INSTDIR\SpeechCraft_Studio.exe.
 Function LaunchSpeechCraft
-    ${If} $BundleChoice == "Full"
-        Exec '"$INSTDIR\SpeechCraft_Studio_Full.exe"'
-    ${Else}
-        Exec '"$INSTDIR\SpeechCraft_Studio_Core.exe"'
-    ${EndIf}
+    Exec '"$INSTDIR\SpeechCraft_Studio.exe"'
 FunctionEnd
 
 ; ==================== UNINSTALLER ====================
@@ -95,73 +87,85 @@ FunctionEnd
 ; ==================== SECTION (where File actually works) ====================
 Section "SpeechCraft Studio" SecMain
     SectionIn RO
-    
-    ; Both EXEs are bundled at compile time. We always install Core.
-    ; Full is bundled too (the bundle is already huge, and it lets us
-    ; support a "switch to Full" workflow later if we want).
+
+    ; Install ONLY the chosen edition. The other EXE is bundled in the
+    ; installer but NOT extracted, so a Core install contains only the
+    ; Core binary and a Full install only the Full binary. Both ship
+    ; under the name SpeechCraft_Studio.exe in $INSTDIR:
+    ;   dist/SpeechCraft_Studio_Core.exe  (lean, no pedalboard/whisper)
+    ;   dist/SpeechCraft_Studio.exe       (full, all heavy deps)
     SetOutPath "$INSTDIR"
-    
-    ; Install Core always. NSIS File directive reads paths relative
-    ; to the .nsi script's own directory, not the build working dir.
-    File "..\dist\SpeechCraft_Studio_Core.exe"
-    
-    ; Install Full as well (so users who picked Core can switch later,
-    ; and so the bundled installer always has both available). The
-    ; Shortcut section only creates the menu shortcut for the chosen
-    ; edition so the start menu doesn't show duplicates.
-    File "..\dist\SpeechCraft_Studio.exe"
-    Rename "$INSTDIR\SpeechCraft_Studio.exe" "$INSTDIR\SpeechCraft_Studio_Full.exe"
-    
+
+    ${If} $BundleChoice == "Full"
+        File "..\dist\SpeechCraft_Studio.exe"
+    ${Else}
+        File "..\dist\SpeechCraft_Studio_Core.exe"
+        Rename "$INSTDIR\SpeechCraft_Studio_Core.exe" "$INSTDIR\SpeechCraft_Studio.exe"
+    ${EndIf}
+
     ; Create Start Menu folder
     CreateDirectory "$SMPROGRAMS\SpeechCraft Studio"
-    
-    ; Create shortcuts based on what user picked
-    ${If} $BundleChoice == "Full"
-        CreateShortcut "$SMPROGRAMS\SpeechCraft Studio\SpeechCraft Studio.lnk" "$INSTDIR\SpeechCraft_Studio_Full.exe"
-    ${Else}
-        CreateShortcut "$SMPROGRAMS\SpeechCraft Studio\SpeechCraft Studio.lnk" "$INSTDIR\SpeechCraft_Studio_Core.exe"
-    ${EndIf}
-    
-    ; Always create a (Full) shortcut so users can switch with one click
-    CreateShortcut "$SMPROGRAMS\SpeechCraft Studio\SpeechCraft Studio (Full).lnk" "$INSTDIR\SpeechCraft_Studio_Full.exe"
-    
+
+    ; One shortcut for the installed edition, plus Uninstall.
+    CreateShortcut "$SMPROGRAMS\SpeechCraft Studio\SpeechCraft Studio.lnk" "$INSTDIR\SpeechCraft_Studio.exe"
     CreateShortcut "$SMPROGRAMS\SpeechCraft Studio\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
 
     ; Write uninstaller
     WriteUninstaller "$INSTDIR\Uninstall.exe"
 
-    ; Write a short readme into the install dir so the finish-page
-    ; "Open Read Me" checkbox has something to show.
-    SetOutPath "$INSTDIR"
-    File "ReadMe.txt"
-    
-    ; Write registry entries — standard Add/Remove Programs keys.
-    ; (The app reads its own feature flags from setup.json via prefs.py,
-    ; so we don't write a BundleChoice key here — it would be dead data.)
+    ; --- Edition-specific ReadMe.txt (describes the edition ACTUALLY
+    ;     installed). Two static files are bundled; the installer copies
+    ;     the one matching the user's choice, then renames it to ReadMe.
+    ${If} $BundleChoice == "Full"
+        File "ReadMe_Full.txt"
+        Rename "$INSTDIR\ReadMe_Full.txt" "$INSTDIR\ReadMe.txt"
+    ${Else}
+        File "ReadMe_Core.txt"
+        Rename "$INSTDIR\ReadMe_Core.txt" "$INSTDIR\ReadMe.txt"
+    ${EndIf}
+
+    ; --- Persist the edition choice to the user's home ----------------
+    ; The app's prefs.py can't be called from NSIS, so the choice is
+    ; dropped in a one-line sidecar that run_speechcraft.py ingests on
+    ; first launch (prefs.merge_installer_edition merges it into
+    ; setup.json as preferred_bundle, then deletes the sidecar).
+    CreateDirectory "$APPDATA\SpeechCraft"
+    ${If} $BundleChoice == "Full"
+        StrCpy $0 "Full"
+    ${Else}
+        StrCpy $0 "Core"
+    ${EndIf}
+    FileOpen $HndSidecar "$APPDATA\SpeechCraft\PreferredBundle.txt" w
+    FileWrite $HndSidecar "$0"
+    FileClose $HndSidecar
+
+    ; Registry entries - standard Add/Remove Programs keys.
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "DisplayName" "SpeechCraft Studio"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "UninstallString" "$INSTDIR\Uninstall.exe"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "DisplayVersion" "1.3.0"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "DisplayVersion" "1.3.3"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "Publisher" "Tracy Smith Consulting"
     WriteRegStr HKLM "Software\SpeechCraft\Studio" "InstallDir" "$INSTDIR"
+    WriteRegStr HKLM "Software\SpeechCraft\Studio" "Edition" "$BundleChoice"
+
 SectionEnd
 
 ; ==================== BUNDLE CHOICE PAGE ====================
 Function BundlePage_Create
     nsDialogs::Create 1018
     Pop $Dialog
-    
+
     ${If} $Dialog == error
         Abort
     ${EndIf}
-    
+
     ; Title
     ${NSD_CreateLabel} 0 0 100% 20u "Choose your edition:"
     Pop $0
-    
+
     ; Core radio. WS_GROUP (added by NSD_CreateFirstRadioButton) marks
     ; this as the start of a new radio-button group so Tab and arrow
     ; keys navigate between Core and Full only.
-    ${NSD_CreateFirstRadioButton} 20 35 100% 12u "Core — on-demand feature downloads (172 MB)"
+    ${NSD_CreateFirstRadioButton} 20 35 100% 12u "Core - on-demand feature downloads (172 MB)"
     Pop $CoreRadio
     SendMessage $CoreRadio ${BM_SETCHECK} ${BST_CHECKED} 0
 
@@ -169,19 +173,19 @@ Function BundlePage_Create
     ${NSD_CreateLabel} 35 50 100% 30u "The lean install: recording, editing, effects, and TTS. Feature models (Whisper transcription, Piper voices) download on demand when you enable them in the setup wizard. Smaller install, works right away for everyday audio work."
     Pop $0
 
-    ; Full radio — NSD_CreateRadioButton (no WS_GROUP), so it's part
+    ; Full radio - NSD_CreateRadioButton (no WS_GROUP), so it's part
     ; of the same group as Core. Tab/arrow keys will toggle between them.
-    ${NSD_CreateRadioButton} 20 90 100% 12u "Full — all feature models pre-bundled (435 MB)"
+    ${NSD_CreateRadioButton} 20 90 100% 12u "Full - all feature models pre-bundled (435 MB)"
     Pop $FullRadio
 
     ; Full description
-    ${NSD_CreateLabel} 35 105 100% 30u "Everything in Core, with the local Whisper transcription and Piper TTS models already bundled. Works fully offline out of the box — no download step, no first-run waiting. Best if you know you'll use the AI features."
+    ${NSD_CreateLabel} 35 105 100% 30u "Everything in Core, with the local Whisper transcription and Piper TTS models already bundled. Works fully offline out of the box - no download step, no first-run waiting. Best if you know you'll use the AI features."
     Pop $0
-    
+
     ; Footer note
-    ${NSD_CreateLabel} 20 150 100% 20u "Tip: you can switch editions later from the setup wizard (Help → Personalise SpeechCraft)."
+    ${NSD_CreateLabel} 20 150 100% 20u "Tip: you can switch editions later by running this installer again."
     Pop $0
-    
+
     nsDialogs::Show
 FunctionEnd
 
@@ -203,7 +207,7 @@ FunctionEnd
 
 ; ==================== POST-INSTALL FINISH ====================
 Function .onInstSuccess
-    ; Nothing extra to do — Section already wrote registry + shortcuts.
+    ; Nothing extra to do - Section already wrote registry + shortcuts.
     ; Don't pop a MessageBox here: the MUI finish page already shows
     ; the "Installation Complete" message and Finish button. Adding a
     ; second modal blocks the finish page from advancing and causes
@@ -226,9 +230,8 @@ Function un.onInit
 FunctionEnd
 
 Section "Uninstall"
-    ; Remove the installed EXEs and uninstaller
-    Delete "$INSTDIR\SpeechCraft_Studio_Core.exe"
-    Delete "$INSTDIR\SpeechCraft_Studio_Full.exe"
+    ; Remove the installed EXE, generated ReadMe and uninstaller
+    Delete "$INSTDIR\SpeechCraft_Studio.exe"
     Delete "$INSTDIR\ReadMe.txt"
     Delete "$INSTDIR\Uninstall.exe"
 
@@ -242,11 +245,13 @@ Section "Uninstall"
     ; Remove the user's downloaded feature models (Piper voices,
     ; Whisper ASR) stored under %APPDATA%\SpeechCraft\feature_assets.
     ; The setup.json and other user prefs in %APPDATA%\SpeechCraft are
-    ; deliberately NOT removed — the user may want to keep their
+    ; deliberately NOT removed - the user may want to keep their
     ; personalisation and just reinstall with a different edition.
     RMDir /R "$APPDATA\SpeechCraft\feature_assets"
+    Delete "$APPDATA\SpeechCraft\PreferredBundle.txt"
 
     ; Remove registry keys
-    DeleteRegKey HKLM "Software\SpeechCraft\Studio"
     DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio"
+    DeleteRegKey HKLM "Software\SpeechCraft\Studio"
+
 SectionEnd

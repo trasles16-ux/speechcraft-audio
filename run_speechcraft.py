@@ -57,6 +57,16 @@ def launch_speechcraft() -> int:
     # wizard gives the user per-feature choices (which is a richer
     # story than the binary Core/Full choice).
     try:
+        # If the NSIS installer dropped a PreferredBundle.txt sidecar
+        # (the edition the user picked at install time), merge it into
+        # setup.json as preferred_bundle before the wizard opens.
+        # Pure JSON merge - no wx dependency, safe to run headless.
+        from prefs import merge_installer_edition
+        merge_installer_edition()
+    except Exception:
+        pass
+
+    try:
         from setup_wizard import should_show_wizard_on_launch, run_setup_wizard
         if should_show_wizard_on_launch():
             completed, aborted = run_setup_wizard()
