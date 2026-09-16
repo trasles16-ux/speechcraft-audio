@@ -4,6 +4,7 @@ __version__ = "1.3.0"
 
 import wx
 import os
+import sys
 import threading
 import webbrowser  # Used for Help menu
 from pydub import AudioSegment  # pydub is small + cheap, used by setup_ffmpeg
@@ -1238,7 +1239,26 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
             seg = AudioSegment.from_file(path)
             print(f"DEBUG: AudioSegment loaded. Duration: {len(seg)}ms, Channels: {seg.channels}")
         except FileNotFoundError as e:
-            # The file itself doesn't exist on disk
+            # pydub shells out to ffprobe for non-WAV. If ffprobe/ffmpeg is
+            # missing, Python reports THAT missing binary in e.filename
+            # (not our audio file). Distinguish so the user gets a real
+            # diagnostic instead of a wrong-path "file not found" message.
+            ffmpeg_path = e.filename if hasattr(e, "filename") and e.filename else None
+            ffmpeg_missing = bool(ffmpeg_path) and (
+                "ffmpeg" in str(ffmpeg_path).lower()
+                or "ffprobe" in str(ffmpeg_path).lower()
+            )
+            if ffmpeg_missing:
+                wx.MessageBox(
+                    f"Cannot load {os.path.basename(path)}.\n\n"
+                    f"FFmpeg is required for M4A, MP3, and other non-WAV "
+                    f"formats, but it was not found at:\n{ffmpeg_path}\n\n"
+                    "Please reinstall SpeechCraft from the official "
+                    "installer so ffmpeg is bundled correctly, or use WAV files.",
+                    "FFmpeg Missing", wx.ICON_ERROR,
+                )
+                return
+            # Genuine "the audio file isn't there" case
             wx.MessageBox(
                 f"File not found:\n{path}",
                 "Cannot Open Audio", wx.ICON_ERROR
@@ -3199,44 +3219,55 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
                 progress_dlg.update(downloaded)
 
         def _worker():
-            from dialogs.download_progress_dialog import DownloadProgressDialog
-            nonlocal progress_dlg
-            def _show_dialog():
-                nonlocal progress_dlg
-                progress_dlg = DownloadProgressDialog(
-                    self, file_name=installer.name,
-                    total_bytes=installer.size_bytes or 1,
-                )
-                progress_dlg.Show()
-            wx.CallAfter(_show_dialog)
-            import time
-            time.sleep(0.2)
+            # Wrap the entire body so non-UpdateCheckError exceptions don't
+            # vanish into wx's event loop — which is what produced the
+            # "clicked Update, nothing happened" symptom on Tracy's machine.
             try:
-                download_with_progress(
-                    installer.url, dest_path,
-                    progress_cb=lambda d, t: wx.CallAfter(_on_main_thread, d, t),
-                    cancel_check=lambda: (progress_dlg.is_cancelled() if progress_dlg else False),
-                )
-            except UpdateCheckError as exc:
-                wx.CallAfter(self._on_download_failed, str(exc))
-                return
-            expected = installer.sha256
-            if expected is None:
-                expected = fetch_expected_sha256(
-                    digest_url=installer.url + ".sha256",
-                    asset_name=installer.name,
-                )
-            if expected is not None and not verify_asset_sha256(dest_path, expected):
+                from dialogs.download_progress_dialog import DownloadProgressDialog
+                nonlocal progress_dlg
+                def _show_dialog():
+                    nonlocal progress_dlg
+                    progress_dlg = DownloadProgressDialog(
+                        self, file_name=installer.name,
+                        total_bytes=installer.size_bytes or 1,
+                    )
+                    progress_dlg.Show()
+                wx.CallAfter(_show_dialog)
+                import time
+                time.sleep(0.2)
                 try:
-                    os.unlink(dest_path)
-                except OSError:
-                    pass
+                    download_with_progress(
+                        installer.url, dest_path,
+                        progress_cb=lambda d, t: wx.CallAfter(_on_main_thread, d, t),
+                        cancel_check=lambda: (progress_dlg.is_cancelled() if progress_dlg else False),
+                    )
+                except UpdateCheckError as exc:
+                    wx.CallAfter(self._on_download_failed, str(exc))
+                    return
+                expected = installer.sha256
+                if expected is None:
+                    expected = fetch_expected_sha256(
+                        digest_url=installer.url + ".sha256",
+                        asset_name=installer.name,
+                    )
+                if expected is not None and not verify_asset_sha256(dest_path, expected):
+                    try:
+                        os.unlink(dest_path)
+                    except OSError:
+                        pass
+                    wx.CallAfter(
+                        self._on_download_failed,
+                        "Installer checksum did not match. The download was discarded.",
+                    )
+                    return
+                wx.CallAfter(self._on_download_verified, dest_path, info)
+            except Exception as exc:
+                import traceback
+                print("DOWNLOAD WORKER EXCEPTION:\n" + traceback.format_exc(), file=sys.stderr)
                 wx.CallAfter(
                     self._on_download_failed,
-                    "Installer checksum did not match. The download was discarded.",
+                    f"Unexpected error: {exc}",
                 )
-                return
-            wx.CallAfter(self._on_download_verified, dest_path, info)
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -3264,6 +3295,18 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
         if choice != wx.ID_YES:
             self.SetStatusText("Update cancelled; installer still downloaded")
             return
+        # Pre-launch hint: the installer is spawned detached. SmartScreen
+        # or UAC can put up a blocking dialog outside the foreground session
+        # which would otherwise look like "Update silently failed".
+        # The dialog below gives the user a chance to see it.
+        wx.MessageBox(
+            f"SpeechCraft is about to close so the v{info.version} "
+            "installer can run. It should appear in a few seconds. If "
+            "you don't see it, check the taskbar or right-click it for "
+            "'Run as administrator'.",
+            "Installer starting",
+            wx.ICON_INFORMATION,
+        )
         try:
             launch_installer(dest_path)
         except UpdateCheckError as exc:
@@ -3276,8 +3319,16 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
         wx.CallLater(500, self._quit_for_update)
 
     def _quit_for_update(self):
-        self.Close(force=True)
-        wx.CallLater(2000, lambda: os._exit(0))
+        # os._exit(0) skips interpreter shutdown and tears down active
+        # sounddevice / pyaudio streams mid-operation, which on Windows
+        # surfaces as STATUS_INVALID_PARAMETER (exit code -22) when the
+        # spawned installer tries to take over. wx.Exit() flushes the
+        # event loop cleanly before exiting.
+        try:
+            self.Close(force=True)
+        except Exception:
+            pass
+        wx.CallLater(2000, wx.Exit)
 
 
 def main(splash=None):
