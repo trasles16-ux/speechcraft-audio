@@ -461,6 +461,12 @@ def launch_installer(path: str) -> "subprocess.Popen":
     # executable!". Starting the installer from a clean environment
     # breaks the contamination chain.
     env = {k: v for k, v in os.environ.items() if not k.startswith("_PYI_")}
+    # Belt-and-braces: also tell the PyInstaller bootloader to treat the
+    # launched app as a fresh top-level process (its documented
+    # "application restart scenario" hook). The installer's launch step
+    # sets this too (System::Call SetEnvironmentVariableW); this makes
+    # the fix work even with an older installer build.
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
     try:
         proc = subprocess.Popen(
             [path],
