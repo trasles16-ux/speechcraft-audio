@@ -48,6 +48,44 @@ else:
 
 PREFS_FILE: Final = PREFS_DIR / "setup.json"
 
+#: Sidecar file the NSIS installer drops at install time, containing
+#: the edition choice ("Core" or "Full") the user picked. Merged into
+#: setup.json as ``preferred_bundle`` on first app launch, then deleted.
+PREFERRED_BUNDLE_SIDECAR: Final = PREFS_DIR / "PreferredBundle.txt"
+
+
+def merge_installer_edition(
+    *,
+    prefs_file: Path | None = None,
+    sidecar: Path | None = None,
+) -> None:
+    """Ingest the installer's PreferredBundle.txt sidecar into setup.json.
+
+    The NSIS installer cannot safely rewrite setup.json (it would need
+    to parse JSON), so it drops the edition choice in a one-line
+    sidecar file. This function merges it into the ``preferred_bundle``
+    top-level key and deletes the sidecar. Idempotent: if the sidecar
+    is already gone, no-op.
+    """
+    sidecar_path = sidecar if sidecar is not None else PREFERRED_BUNDLE_SIDECAR
+    if not sidecar_path.exists():
+        return
+    try:
+        edition = sidecar_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return
+    if edition not in ("Core", "Full"):
+        # Unknown content - ignore rather than corrupt the prefs file.
+        return
+    prefs_file_path = prefs_file if prefs_file is not None else PREFS_FILE
+    prefs = load_prefs(prefs_file=prefs_file_path)
+    prefs["preferred_bundle"] = edition
+    save_prefs(prefs, prefs_file=prefs_file_path)
+    try:
+        sidecar_path.unlink()
+    except OSError:
+        pass
+
 
 # --- Read / write -----------------------------------------------------------
 
@@ -120,6 +158,8 @@ def save_prefs(
 __all__ = (
     "PREFS_DIR",
     "PREFS_FILE",
+    "PREFERRED_BUNDLE_SIDECAR",
     "load_prefs",
     "save_prefs",
+    "merge_installer_edition",
 )

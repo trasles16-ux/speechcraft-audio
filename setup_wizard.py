@@ -112,6 +112,16 @@ class SetupWizardDialog(wx.Dialog):
         panel = wx.Panel(self)
         panel.SetBackgroundColour(wx.Colour(248, 246, 240))
 
+        # NVDA announcement channel: screen readers watch the status
+        # bar of the focused window and read text changes without
+        # focus being stolen. Page changes set the status text so a
+        # keyboard/NVDA user always hears "Page N of M: <page>" when
+        # navigating Next/Back. Parented to the panel and placed by
+        # the panel sizer so it actually renders (wx.Dialog has no
+        # CreateStatusBar — that's a Frame API).
+        self._status = wx.StatusBar(panel)
+        self._status.SetName("Wizard status")
+
         outer = wx.BoxSizer(wx.VERTICAL)
 
         # Page indicator: "Page 2 of 5 — Editing features"
@@ -132,7 +142,7 @@ class SetupWizardDialog(wx.Dialog):
         self._tts = TTSEnginesPage(self._notebook, flags=self._flags)
         self._download = DownloadPage(
             self._notebook,
-            flags=self._flags,
+            flags_provider=self._current_flags,
             state_file=self._prefs_file,
         )
         self._data = DataLocationPage(
@@ -187,6 +197,10 @@ class SetupWizardDialog(wx.Dialog):
 
         outer.Add(nav, 0, wx.EXPAND | wx.ALL, 12)
 
+        # Status bar renders last (bottom edge) and carries the NVDA
+        # page-announcement text.
+        outer.Add(self._status, 0, wx.EXPAND)
+
         panel.SetSizer(outer)
 
     # ------------------------------------------------------------------
@@ -221,6 +235,14 @@ class SetupWizardDialog(wx.Dialog):
         # current flags so it shows the up-to-date state.
         if self._notebook.GetCurrentPage() is self._summary:
             self._summary.update_flags(self._current_flags())
+        # The Download page's list is live-rebuilt from the current
+        # checkbox state, so it always reflects what the user has
+        # chosen on the Editing / TTS pages.
+        if self._notebook.GetCurrentPage() is self._download:
+            self._download.refresh()
+        # NVDA: land focus on the new page's heading so the screen
+        # reader announces the page the user just arrived at.
+        self._focus_page_content()
         event.Skip()
 
     def _on_back(self, event: wx.Event) -> None:
@@ -268,14 +290,19 @@ class SetupWizardDialog(wx.Dialog):
     def _current_flags(self) -> FeatureFlags:
         """Return a FeatureFlags reflecting the live state of all
         pages that have collect() methods. Used to refresh the
-        Summary page when navigating back to it."""
+        Summary page when navigating back to it and to feed the
+        Download page's live list.
+
+        Each page's collect() returns a FeatureFlags with only its
+        own toggles set (others at default), so merge them against
+        the dialog's loaded baseline: a page's own fields win, every
+        other field keeps the value it had when the wizard opened.
+        """
+        baseline = self._flags
         editing = self._editing.collect()
         tts = self._tts.collect()
-        # Merge: editing page fields win for the editing features,
-        # tts page fields win for the TTS features, everything else
-        # stays at the loaded defaults.
         return FeatureFlags(
-            basic_editing=editing.basic_editing,
+            basic_editing=baseline.basic_editing,
             pedalboard_effects=editing.pedalboard_effects,
             local_transcription=editing.local_transcription,
             cloud_transcription=editing.cloud_transcription,
@@ -286,26 +313,20 @@ class SetupWizardDialog(wx.Dialog):
         )
 
     def _save_current_page(self) -> None:
-        """Write the current page's collect() result to setup.json.
+        """Persist the merged live flag state to setup.json.
 
-        Progressive save: each Next click persists whatever the user
-        just toggled. If they hit Cancel mid-flight, the partial
-        choices are still saved (but wizard_completed stays False so
-        the wizard re-shows next launch).
-
-        Pages without their own state (Welcome, Data location,
-        Summary) are skipped so we don't accidentally overwrite the
-        user's saved flags with default values. A page opts in by
-        overriding ``collect()`` to return a non-default FeatureFlags,
-        or by setting ``_has_state = True`` on the instance.
+        Progressive save: each Next / Back click persists whatever the
+        user has toggled so far. Saving the *merged* state (via
+        :meth:`_current_flags`) rather than the single page's
+        collect() result avoids clobbering the other page's choices —
+        a page's collect() only carries its own toggles, so writing
+        it directly would reset the other page's fields to defaults.
         """
         page = self._current_page()
         if not getattr(page, "_has_state", False):
             return
-        flags = page.collect()
-        # Update self._flags in memory AND write to disk
-        self._flags = flags
-        save_feature_flags(prefs_file=self._prefs_file, flags=flags)
+        self._flags = self._current_flags()
+        save_feature_flags(prefs_file=self._prefs_file, flags=self._flags)
 
     def _refresh_indicator(self) -> None:
         idx = self._notebook.GetSelection()
@@ -313,6 +334,34 @@ class SetupWizardDialog(wx.Dialog):
         page_name = self._notebook.GetPageText(idx)
         self._indicator.SetLabel(f"Page {idx + 1} of {total} — {page_name}")
         self._indicator.SetName(f"Page {idx + 1} of {total}: {page_name}")
+        # Screen-reader announcement: NVDA reads status-bar changes on
+        # the focused window without stealing focus from the tab strip,
+        # so the user always hears which page they've landed on.
+        self._status.SetStatusText(f"Page {idx + 1} of {total}: {page_name}")
+
+    def _focus_page_content(self):
+        """Move focus to the first meaningful control on the page.
+
+        NVDA announces the focused control on focus-change, so landing
+        focus on the page heading makes the screen reader read the
+        page title when the user navigates Next/Back. Returns the
+        focused widget (or None) so callers/tests can verify the
+        target.
+        """
+        page = self._current_page()
+        if page is None:
+            return None
+        heading = getattr(page, "_heading", None)
+        if heading is not None and heading.IsShown():
+            heading.SetFocus()
+            return heading
+        # No dedicated heading (e.g. Download page list panel) —
+        # focus the first child so NVDA reads something meaningful.
+        children = page.GetChildren()
+        if children:
+            children[0].SetFocus()
+            return children[0]
+        return None
 
     def _refresh_nav_buttons(self) -> None:
         idx = self._notebook.GetSelection()

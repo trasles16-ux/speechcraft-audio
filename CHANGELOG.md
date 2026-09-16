@@ -8,6 +8,16 @@ All notable changes to SpeechCraft Audio are documented here. The format follows
 - **Auto-update crashed on first run after install**: the installer staging folder (`%LOCALAPPDATA%\SpeechCraft\updates\`) doesn't exist on a fresh install, so the download raised `FileNotFoundError` (`[Errno 2] No such file or directory`). `download_with_progress` now creates the destination directory before writing.
 - **Misleading "Update Error" dialog** when a release has no installer asset — the message now explains it's a release-ops gap and links to the GitHub release page for a manual download.
 
+## [1.3.3] — 2026-09-16
+
+### Fixed
+- **Choosing "Full" at install still behaved like Core**: the NSIS installer now installs *only the chosen edition's EXE* and writes a `PreferredBundle.txt` sidecar to `%APPDATA%\SpeechCraft\`; on first launch `run_speechcraft.py` merges it into `setup.json` (`prefs.merge_installer_edition`), so the app and the wizard know which edition you picked.
+- **ReadMe.txt always said "Core"**: the installer now copies an edition-specific ReadMe (Full/Core) so the finish page and the installed `ReadMe.txt` describe the edition actually installed.
+- **"Download all" button missing on the wizard's Download page**: the page is now rebuilt live from the current checkbox state on navigation (`DownloadPage.flags_provider` + `refresh()`), and the wizard's progressive save now persists the *merged* live flag state instead of clobbering other pages' choices.
+- **Pedalboard effects errored on Core builds** ("pedalboard not installed"): the feature gate now ANDs the user's flag with actual module availability, so on a Core build the five pedalboard effects stay disabled and a one-time hint (persisted in `setup.json`) explains why and points at the Full edition.
+- **NVDA didn't read the wizard's pages**: the dialog now carries a status bar that announces "Page N of M: <page>" on every Next/Back (the channel NVDA watches without stealing focus), focus lands on each page's heading when you arrive so the page title is read on focus-change, and the checkbox description labels now announce the real description text instead of "X description".
+- **Silent auto-update install failure**: `launch_installer` now confirms the installer process actually started (and is alive) before the app quits; if the launch fails — e.g. UAC can't prompt on a remote session — the user gets a visible "Could not start the installer" dialog instead of the app disappearing.
+
 ## [1.3.0] — 2026-09-14
 
 ### Added

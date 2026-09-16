@@ -1,6 +1,6 @@
 #: SpeechCraft Studio version. Bumped in lockstep with the NSIS installer
 #: version (installer/speechcraft_setup.nsi) and with the GitHub release tag.
-__version__ = "1.3.0"
+__version__ = "1.3.3"
 
 import wx
 import os
@@ -137,6 +137,40 @@ def safe_import(module_name):
     except ImportError as e:
         print(f"Warning: Module {module_name} not available: {e}")
         return DummyModule(module_name, str(e))
+
+def _audio_effects_available() -> bool:
+    """True iff the audio_effects module actually loaded (pedalboard etc.).
+
+    On Core builds ``audio_effects`` is a :class:`DummyModule` (the
+    pedalboard / scipy stack isn't bundled), so pedalboard-dependent
+    effects must stay disabled even when the user's feature flag is
+    on — the flag is a preference, not a guarantee the engine exists.
+    """
+    return not isinstance(audio_effects, DummyModule)
+
+
+def _show_core_effects_hint_once() -> None:
+    """One-time explanation when Core's greyed-out pedalboard items appear.
+
+    Persisted in setup.json so it shows exactly once; the user can
+    dismiss it and won't be nagged again.
+    """
+    from prefs import load_prefs, save_prefs
+    prefs = load_prefs()
+    if prefs.get("core_effects_hint_shown"):
+        return
+    prefs["core_effects_hint_shown"] = True
+    save_prefs(prefs)
+    wx.MessageBox(
+        "Some effects (Room Remover, Compressor, De-esser, Equalizer, "
+        "Auto-Ducker) are greyed out because you're running the Core "
+        "edition, which doesn't include the pedalboard engine.\n\n"
+        "To install these effects, re-run the SpeechCraft installer and "
+        "choose the Full edition. Your settings and projects are kept.",
+        "Core edition — advanced effects not installed",
+        wx.OK | wx.ICON_INFORMATION,
+    )
+
 
 transcription = safe_import('transcription')
 breath_smoothing = safe_import('breath_smoothing')
@@ -534,10 +568,19 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
         )
         _set(getattr(self, "line_placer_item", None), line_placing_ok)
 
-        # Pedalboard effects (Effects menu)
-        pedalboard_on = gates["pedalboard_effects"].enabled
+        # Pedalboard effects (Effects menu). The user's flag is a
+        # preference; on Core builds the pedalboard engine isn't
+        # bundled, so audio_effects is a DummyModule and these items
+        # must stay disabled regardless of the flag.
+        pedalboard_on = (
+            gates["pedalboard_effects"].enabled
+            and _audio_effects_available()
+        )
         for item in getattr(self, "effects_pedalboard_items", []):
             _set(item, pedalboard_on)
+        # One-time hint when Core greyed out effects the user wanted.
+        if gates["pedalboard_effects"].enabled and not pedalboard_on:
+            _show_core_effects_hint_once()
 
         # TTS (Speech menu)
         _set(getattr(self, "edge_tts_item", None), gates["edge_tts"].enabled)

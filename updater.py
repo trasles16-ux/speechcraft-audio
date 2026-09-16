@@ -420,12 +420,24 @@ def installer_staging_path(version: str) -> str:
     return os.path.join(default_installer_dir(), f"SpeechCraft-Setup-{version}.exe")
 
 
-def launch_installer(path: str) -> None:
+def launch_installer(path: str) -> "subprocess.Popen":
     """Spawn the installer EXE detached from the current process.
 
     Use ``subprocess.Popen`` with no shell, no window, and don't wait.
     SpeechCraft should quit immediately after calling this so the
     installer can replace the running EXE.
+
+    Returns the ``Popen`` handle so the caller can verify the installer
+    actually started (``poll()`` stays ``None`` for a few seconds)
+    before SpeechCraft exits. A detached installer that is about to
+    quit the parent must be confirmed alive — otherwise a spawn that
+    failed (e.g. UAC not allowed in a remote-desktop session) looks
+    like "clicked install, then nothing happened".
+
+    Raises :class:`UpdateCheckError` if the installer EXE is missing.
+    A spawn-time ``OSError`` (access denied, UAC blocked) is
+    re-raised as :class:`UpdateCheckError` with the WinError detail,
+    so callers have a single exception type to handle.
     """
     if sys.platform != "win32":
         raise UpdateCheckError(
@@ -438,9 +450,30 @@ def launch_installer(path: str) -> None:
     # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP so SpeechCraft exiting
     # doesn't kill the installer.
     flags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
-    subprocess.Popen(
-        [path],
-        close_fds=True,
-        creationflags=flags,
-        shell=False,
-    )
+    try:
+        proc = subprocess.Popen(
+            [path],
+            close_fds=True,
+            creationflags=flags,
+            shell=False,
+        )
+    except OSError as exc:
+        raise UpdateCheckError(
+            f"Could not start the installer ({path}). "
+            f"Windows error: {exc}. The installer may need elevation "
+            f"(right-click, Run as administrator) or you may be in a "
+            f"remote session where UAC prompts cannot be shown. "
+            f"You can run the installer manually: {path}"
+        ) from exc
+    # Give the spawn a beat to fail-fast (e.g. immediate Win32 error),
+    # then return the live handle so the caller can poll().
+    import time as _time
+    _time.sleep(1.0)
+    if proc.poll() is not None:
+        raise UpdateCheckError(
+            f"The installer started but exited immediately "
+            f"(code {proc.returncode}) — {path}. It may have been "
+            f"blocked by Windows SmartScreen or Antivirus. Try running "
+            f"it manually."
+        )
+    return proc
