@@ -1,6 +1,6 @@
 #: SpeechCraft Studio version. Bumped in lockstep with the NSIS installer
 #: version (installer/speechcraft_setup.nsi) and with the GitHub release tag.
-__version__ = "1.3.3"
+__version__ = "1.3.4"
 
 import wx
 import os
@@ -177,6 +177,20 @@ breath_smoothing = safe_import('breath_smoothing')
 auto_ducker = safe_import('auto_ducker')
 audio_effects = safe_import('audio_effects')
 line_placer = safe_import('line_placer')
+
+
+def _temp_wav(name: str) -> str:
+    """Absolute path for a scratch WAV, under the user's temp dir.
+
+    These used to be CWD-relative ("temp_playback.wav"), which meant
+    a Start-Menu launch (CWD = the install dir, v1.3.2 and earlier)
+    wrote ~1.6 GB of WAVs into C:\\Program Files — and would fail
+    outright for a standard (non-admin) user. The temp dir is always
+    writable and never needs elevation. Deterministic per name so
+    every call site agrees on the same file.
+    """
+    import tempfile
+    return os.path.join(tempfile.gettempdir(), f"speechcraft_{name}")
 script_handler = safe_import('script_handler')
 word_alignment = safe_import('word_alignment')
 audio_recorder = safe_import('audio_recorder')
@@ -825,8 +839,8 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
             self.current_audio = mixed
             self.audio_loaded = True
             
-            # Save temp for reference
-            threading.Thread(target=lambda: mixed.export("temp_playback.wav", format="wav"), daemon=True).start()
+            # Save temp for reference (user temp dir, not CWD — see _temp_wav)
+            threading.Thread(target=lambda: mixed.export(_temp_wav("temp_playback.wav"), format="wav"), daemon=True).start()
 
     def on_tracks_key_down(self, event):
         keycode = event.GetKeyCode()
@@ -1940,7 +1954,7 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
             # transcribe_with_alignment() works for both FasterWhisper
             # (real word timestamps) and Google SR (estimated timestamps)
             transcriber = transcription.create_transcriber()
-            text, alignment = transcriber.transcribe_with_alignment("temp_playback.wav")
+            text, alignment = transcriber.transcribe_with_alignment(_temp_wav("temp_playback.wav"))
             self.word_alignment = alignment
             
             wx.CallAfter(self._on_transcribe_success, text)
@@ -2036,7 +2050,7 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
         # Export to a WAV file for tools that need to read it directly
         orig_audio = self.current_audio
         threading.Thread(
-            target=lambda: orig_audio.export("temp_original.wav", format="wav"),
+            target=lambda: orig_audio.export(_temp_wav("temp_original.wav"), format="wav"),
             daemon=True
         ).start()
 
@@ -2058,9 +2072,9 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
             mode_label = "Original (before processing)"
             self.log_area.AppendText(f"Before/After: now playing ORIGINAL.{self._get_playhead_label()}\n")
         else:
-            # Switch back to processed — reload from temp_playback.wav
+            # Switch back to processed — reload from the temp playback WAV
             try:
-                seg = AudioSegment.from_file("temp_playback.wav")
+                seg = AudioSegment.from_file(_temp_wav("temp_playback.wav"))
                 self.current_samples_float = self._get_samples_float(seg)
                 self.current_samples_int16 = (self.current_samples_float * 32767).astype(np.int16)
                 self._playback_mode = "processed"
@@ -2124,8 +2138,8 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
                 'reduction_db': 6, 'dry_wet': 1.0, 'rms_thresh': 0.02
             })
             breath_smoothing.process_file(
-                "temp_playback.wav",
-                "temp_processed.wav",
+                _temp_wav("temp_playback.wav"),
+                _temp_wav("temp_processed.wav"),
                 reduction_db=vals.get('reduction_db', 6),
                 rms_thresh=vals.get('rms_thresh', 0.02),
                 dry_wet=vals.get('dry_wet', 1.0),
@@ -2137,7 +2151,7 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
     def _on_breath_success(self):
         if self.dlg: self.dlg.Destroy()
         self.push_undo_state()  # Save full state so undo restores pre-effect audio
-        self.load_audio("temp_processed.wav")
+        self.load_audio(_temp_wav("temp_processed.wav"))
         # Reset to processed mode after applying an effect
         self._playback_mode = "processed"
         self.ba_toggle_item.Check(False)
@@ -2833,7 +2847,7 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
             self.announce(f"Reset failed: {e}")
 
     def on_check_integrity(self, event):
-        path = os.path.abspath("temp_playback.wav")
+        path = _temp_wav("temp_playback.wav")
         if os.path.exists(path):
             self.announce("Opening mixed audio in system player...")
             webbrowser.open(f"file:///{path}")

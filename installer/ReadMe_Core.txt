@@ -1,4 +1,4 @@
-SpeechCraft Studio 1.3.3 - Core Edition
+SpeechCraft Studio 1.3.4 - Core Edition
 =======================================
 
 You installed the CORE edition: a lean, fast-starting build.

@@ -450,12 +450,24 @@ def launch_installer(path: str) -> "subprocess.Popen":
     # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP so SpeechCraft exiting
     # doesn't kill the installer.
     flags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    # Scrub PyInstaller's internal environment variables. This app is a
+    # PyInstaller onefile, so its process environment carries _PYI_*
+    # internals (parent-process level, application home dir, …). If the
+    # installer inherits them, the NEW app launched from the installer's
+    # finish page sees a dead "originating parent" — and PyInstaller
+    # >= 6.22.1's onefile security check (mandatory in elevated mode,
+    # which our admin installer forces) aborts the launch with
+    # "Security validation failure: parent process has different
+    # executable!". Starting the installer from a clean environment
+    # breaks the contamination chain.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("_PYI_")}
     try:
         proc = subprocess.Popen(
             [path],
             close_fds=True,
             creationflags=flags,
             shell=False,
+            env=env,
         )
     except OSError as exc:
         raise UpdateCheckError(

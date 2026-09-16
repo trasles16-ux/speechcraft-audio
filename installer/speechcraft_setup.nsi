@@ -22,12 +22,12 @@ InstallDir "$PROGRAMFILES64\SpeechCraft Studio"
 InstallDirRegKey HKLM "Software\SpeechCraft\Studio" "InstallDir"
 SetCompressor /SOLID lzma
 SetOverwrite on
-VIProductVersion "1.3.3.0"
+VIProductVersion "1.3.4.0"
 VIAddVersionKey "ProductName" "SpeechCraft Studio"
 VIAddVersionKey "CompanyName" "Tracy Smith Consulting"
 VIAddVersionKey "LegalCopyright" "Tracy Smith 2026 (MIT)"
 VIAddVersionKey "FileDescription" "Accessible Audio Editor"
-VIAddVersionKey "FileVersion" "1.3.3"
+VIAddVersionKey "FileVersion" "1.3.4"
 
 Name "SpeechCraft Studio"
 
@@ -49,8 +49,8 @@ Var HndSidecar
 !include "x64.nsh"
 
 ; ==================== PAGE SEQUENCE ====================
-!define MUI_WELCOMEPAGE_TITLE "Welcome to SpeechCraft Studio 1.3.3"
-!define MUI_WELCOMEPAGE_TEXT "This wizard installs SpeechCraft Studio v1.3.3 on your computer. SpeechCraft Studio is an accessible audio editor. You'll be asked to pick an edition on the next page: Core (small install, models downloaded on demand) or Full (all models bundled, works offline out of the box). Click Next to continue."
+!define MUI_WELCOMEPAGE_TITLE "Welcome to SpeechCraft Studio 1.3.4"
+!define MUI_WELCOMEPAGE_TEXT "This wizard installs SpeechCraft Studio v1.3.4 on your computer. SpeechCraft Studio is an accessible audio editor. You'll be asked to pick an edition on the next page: Core (small install, models downloaded on demand) or Full (all models bundled, works offline out of the box). Click Next to continue."
 !insertmacro MUI_PAGE_WELCOME
 
 !insertmacro MUI_PAGE_LICENSE "LICENSE.txt"
@@ -60,7 +60,7 @@ Page custom BundlePage_Create BundlePage_Leave
 !insertmacro MUI_PAGE_INSTFILES
 
 !define MUI_FINISHPAGE_TITLE "Installation complete"
-!define MUI_FINISHPAGE_TEXT "SpeechCraft Studio 1.3.3 is now installed. Tick the checkboxes below to open the install folder and/or launch SpeechCraft Studio."
+!define MUI_FINISHPAGE_TEXT "SpeechCraft Studio 1.3.4 is now installed. Tick the checkboxes below to open the install folder and/or launch SpeechCraft Studio."
 ; "Launch" button on finish page - points at the single installed EXE.
 !define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_TEXT "Launch SpeechCraft Studio"
@@ -74,7 +74,21 @@ Page custom BundlePage_Create BundlePage_Leave
 ; ==================== LAUNCH AFTER INSTALL ====================
 ; Both editions install to the same filename, so the launcher is
 ; always $INSTDIR\SpeechCraft_Studio.exe.
+;
+; Set PYINSTALLER_RESET_ENVIRONMENT=1 for the launched process. The
+; app is a PyInstaller onefile; when the installer is itself launched
+; by a running PyInstaller app (the in-app auto-update flow), the
+; installer process inherits that app's internal _PYI_* environment
+; variables. Our RequestExecutionLevel admin makes the launch
+; elevated, and PyInstaller >= 6.22.1 enforces its onefile
+; security check in elevated mode: the new app's bootloader walks
+; the inherited "originating parent" PID, finds a dead/recycled
+; process, and dies with "Security validation failure: parent
+; process has different executable!". The reset variable tells the
+; bootloader to treat this launch as a fresh top-level process
+; (PyInstaller's documented "application restart scenario" hook).
 Function LaunchSpeechCraft
+    System::Call 'kernel32::SetEnvironmentVariableW(w "PYINSTALLER_RESET_ENVIRONMENT", w "1")'
     Exec '"$INSTDIR\SpeechCraft_Studio.exe"'
 FunctionEnd
 
@@ -88,14 +102,31 @@ FunctionEnd
 Section "SpeechCraft Studio" SecMain
     SectionIn RO
 
+    SetOutPath "$INSTDIR"
+
+    ; --- Clean up previous editions BEFORE writing. NSIS File/Rename
+    ;     both silently no-op when the target exists, so an upgrade
+    ;     over a v1.3.2 install would leave BOTH the old and the new
+    ;     EXE (and the old static ReadMe) in the folder. Known legacy
+    ;     names across the v1.2 -> v1.3.4 history:
+    Delete "$INSTDIR\SpeechCraft_Studio.exe"
+    Delete "$INSTDIR\SpeechCraft_Studio_Core.exe"
+    Delete "$INSTDIR\SpeechCraft_Studio_Full.exe"
+    Delete "$INSTDIR\ReadMe.txt"
+    Delete "$INSTDIR\ReadMe_Core.txt"
+    Delete "$INSTDIR\ReadMe_Full.txt"
+    ; Scratch WAVs the pre-v1.3.4 app wrote CWD-relative (a Start-Menu
+    ; launch used the install dir as CWD, dumping ~1.6 GB here):
+    Delete "$INSTDIR\temp_original.wav"
+    Delete "$INSTDIR\temp_playback.wav"
+    Delete "$INSTDIR\temp_processed.wav"
+
     ; Install ONLY the chosen edition. The other EXE is bundled in the
     ; installer but NOT extracted, so a Core install contains only the
     ; Core binary and a Full install only the Full binary. Both ship
     ; under the name SpeechCraft_Studio.exe in $INSTDIR:
     ;   dist/SpeechCraft_Studio_Core.exe  (lean, no pedalboard/whisper)
     ;   dist/SpeechCraft_Studio.exe       (full, all heavy deps)
-    SetOutPath "$INSTDIR"
-
     ${If} $BundleChoice == "Full"
         File "..\dist\SpeechCraft_Studio.exe"
     ${Else}
@@ -142,7 +173,7 @@ Section "SpeechCraft Studio" SecMain
     ; Registry entries - standard Add/Remove Programs keys.
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "DisplayName" "SpeechCraft Studio"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "UninstallString" "$INSTDIR\Uninstall.exe"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "DisplayVersion" "1.3.3"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "DisplayVersion" "1.3.4"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "Publisher" "Tracy Smith Consulting"
     WriteRegStr HKLM "Software\SpeechCraft\Studio" "InstallDir" "$INSTDIR"
     WriteRegStr HKLM "Software\SpeechCraft\Studio" "Edition" "$BundleChoice"
@@ -230,9 +261,19 @@ Function un.onInit
 FunctionEnd
 
 Section "Uninstall"
-    ; Remove the installed EXE, generated ReadMe and uninstaller
+    ; Remove the installed EXE, generated ReadMe and uninstaller.
+    ; Legacy names (pre-v1.3.4 installs) and scratch WAVs are swept
+    ; too, so the final RMDir below can actually remove the folder
+    ; instead of leaving it behind (RMDir fails on a non-empty dir).
     Delete "$INSTDIR\SpeechCraft_Studio.exe"
+    Delete "$INSTDIR\SpeechCraft_Studio_Core.exe"
+    Delete "$INSTDIR\SpeechCraft_Studio_Full.exe"
     Delete "$INSTDIR\ReadMe.txt"
+    Delete "$INSTDIR\ReadMe_Core.txt"
+    Delete "$INSTDIR\ReadMe_Full.txt"
+    Delete "$INSTDIR\temp_original.wav"
+    Delete "$INSTDIR\temp_playback.wav"
+    Delete "$INSTDIR\temp_processed.wav"
     Delete "$INSTDIR\Uninstall.exe"
 
     ; Remove Start Menu shortcuts
