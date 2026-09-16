@@ -8,6 +8,13 @@ All notable changes to SpeechCraft Audio are documented here. The format follows
 - **Auto-update crashed on first run after install**: the installer staging folder (`%LOCALAPPDATA%\SpeechCraft\updates\`) doesn't exist on a fresh install, so the download raised `FileNotFoundError` (`[Errno 2] No such file or directory`). `download_with_progress` now creates the destination directory before writing.
 - **Misleading "Update Error" dialog** when a release has no installer asset — the message now explains it's a release-ops gap and links to the GitHub release page for a manual download.
 
+## [1.3.4] — 2026-09-16
+
+### Fixed
+- **Post-install / auto-update launch died with "Security validation failure: parent process has different executable!"**: a PyInstaller 6.22.1+ onefile bootloader security check (mandatory when the process runs elevated — which our admin installer forces) aborts a launch that inherits *another* onefile app's internal `_PYI_*` environment. In the auto-update flow, the running app spawned the installer and it inherited those vars; the new app launched from the finish page saw a dead "originating parent" and the bootloader killed it before the app ever started. The installer's finish-page launch now sets `PYINSTALLER_RESET_ENVIRONMENT=1` (PyInstaller's documented hook for the "application restart scenario"), and the updater scrubs `_PYI_*` variables before spawning the installer, so the contamination chain is broken at both ends.
+- **Upgrades left debris in the install folder**: NSIS `File`/`Rename` silently no-op when the target exists, so re-running the installer over v1.3.2/v1.3.3 left stale `SpeechCraft_Studio_*.exe` binaries, old `ReadMe` files, and — the big one — up to ~1.6 GB of scratch `temp_*.wav` files that pre-v1.3.4 wrote CWD-relative into `C:\Program Files` (and would have failed for a standard user). The installer now deletes known legacy names before writing the new edition, and the uninstaller sweeps them too.
+- **Scratch WAV files wrote into the working directory** (`temp_original.wav`, `temp_playback.wav`, `temp_processed.wav`): a Start-Menu launch has the install dir as CWD, so the Before/After and Breath Smoothing paths dumped gigabytes into `C:\Program Files` and would crash for non-admin users. All call sites now use `tempfile.gettempdir()` via a single `_temp_wav()` helper.
+
 ## [1.3.3] — 2026-09-16
 
 ### Fixed

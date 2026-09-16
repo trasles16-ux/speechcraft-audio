@@ -1,4 +1,4 @@
-SpeechCraft Studio 1.3.3 - Full Edition
+SpeechCraft Studio 1.3.4 - Full Edition
 =======================================
 
 You installed the FULL edition: every engine and model bundled.
