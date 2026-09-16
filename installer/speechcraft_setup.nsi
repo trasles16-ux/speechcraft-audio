@@ -20,12 +20,12 @@ InstallDir "$PROGRAMFILES64\SpeechCraft Studio"
 InstallDirRegKey HKLM "Software\SpeechCraft\Studio" "InstallDir"
 SetCompressor /SOLID lzma
 SetOverwrite on
-VIProductVersion "1.3.0.0"
+VIProductVersion "1.3.2.0"
 VIAddVersionKey "ProductName" "SpeechCraft Studio"
 VIAddVersionKey "CompanyName" "Tracy Smith Consulting"
 VIAddVersionKey "LegalCopyright" "Tracy Smith 2026 (MIT)"
 VIAddVersionKey "FileDescription" "Accessible Audio Editor"
-VIAddVersionKey "FileVersion" "1.3.0"
+VIAddVersionKey "FileVersion" "1.3.2"
 
 Name "SpeechCraft Studio"
 
@@ -46,8 +46,8 @@ Var FullRadio
 !include "x64.nsh"
 
 ; ==================== PAGE SEQUENCE ====================
-!define MUI_WELCOMEPAGE_TITLE "Welcome to SpeechCraft Studio 1.3.0"
-!define MUI_WELCOMEPAGE_TEXT "This wizard installs SpeechCraft Studio v1.3.0 on your computer. SpeechCraft Studio is an accessible audio editor. You'll be asked to pick an edition on the next page: Core (small install, models downloaded on demand) or Full (all models bundled, works offline out of the box). Click Next to continue."
+!define MUI_WELCOMEPAGE_TITLE "Welcome to SpeechCraft Studio 1.3.2"
+!define MUI_WELCOMEPAGE_TEXT "This wizard installs SpeechCraft Studio v1.3.2 on your computer. SpeechCraft Studio is an accessible audio editor. You'll be asked to pick an edition on the next page: Core (small install, models downloaded on demand) or Full (all models bundled, works offline out of the box). Click Next to continue."
 !insertmacro MUI_PAGE_WELCOME
 
 !insertmacro MUI_PAGE_LICENSE "LICENSE.txt"
@@ -57,7 +57,7 @@ Page custom BundlePage_Create BundlePage_Leave
 !insertmacro MUI_PAGE_INSTFILES
 
 !define MUI_FINISHPAGE_TITLE "Installation complete"
-!define MUI_FINISHPAGE_TEXT "SpeechCraft Studio 1.3.0 is now installed. Tick the checkboxes below to open the install folder and/or launch SpeechCraft Studio."
+!define MUI_FINISHPAGE_TEXT "SpeechCraft Studio 1.3.2 is now installed. Tick the checkboxes below to open the install folder and/or launch SpeechCraft Studio."
 ; "Launch" button on finish page — points at the EXE matching the
 ; edition the user picked on the bundle-choice page. Without this
 ; override, NSIS tries $INSTDIR\<Name>.exe which is
@@ -140,7 +140,7 @@ Section "SpeechCraft Studio" SecMain
     ; so we don't write a BundleChoice key here — it would be dead data.)
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "DisplayName" "SpeechCraft Studio"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "UninstallString" "$INSTDIR\Uninstall.exe"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "DisplayVersion" "1.3.0"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "DisplayVersion" "1.3.2"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "Publisher" "Tracy Smith Consulting"
     WriteRegStr HKLM "Software\SpeechCraft\Studio" "InstallDir" "$INSTDIR"
 SectionEnd

@@ -4,6 +4,18 @@ All notable changes to SpeechCraft Audio are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.3.2] — 2026-09-15
+
+### Fixed
+- **m4a "File not found" with the wrong path**: opening an m4a produced a "File not found" dialog pointing at the audio file, when the real cause was a missing ffprobe/ffmpeg binary. pydub's `FileNotFoundError` carries `e.filename` pointing at the missing binary, not the audio; the dialog now distinguishes the two cases and surfaces a proper FFmpeg Missing diagnostic when ffprobe is missing.
+- **Update silently fails when the download worker hits a non-UpdateCheckError exception**. The daemon thread in `_run_update_download` only caught `UpdateCheckError`; any other exception (network timeout, OSError, etc.) vanished into wx's event loop and the user saw the prompt dialog's "Update" button then nothing. The worker body is now wrapped in a top-level `try/except Exception` that surfaces unexpected errors via `_on_download_failed`.
+- **Exit code `-22` after an update**. `_quit_for_update` was calling `os._exit(0)` which skips interpreter shutdown mid-operation; the spawned installer then failed with `STATUS_INVALID_PARAMETER` (exit -22). Switched to `wx.Exit()` which flushes the event loop first.
+
+### Added
+- **Pre-launch message box** before `launch_installer()`, telling the user an installer should appear in a few seconds — gives them a chance to notice if UAC/SmartScreen is blocking the spawn.
+
+## [1.3.1] — 2026-09-15
+
 ### Fixed
 - **Auto-update crashed on first run after install**: the installer staging folder (`%LOCALAPPDATA%\SpeechCraft\updates\`) doesn't exist on a fresh install, so the download raised `FileNotFoundError` (`[Errno 2] No such file or directory`). `download_with_progress` now creates the destination directory before writing.
 - **Misleading "Update Error" dialog** when a release has no installer asset — the message now explains it's a release-ops gap and links to the GitHub release page for a manual download.

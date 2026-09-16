@@ -1,4 +1,4 @@
-SpeechCraft Studio 1.3.0 — Installed Edition
+SpeechCraft Studio 1.3.2 — Installed Edition
 ============================================
 
 You have installed one of two editions:
