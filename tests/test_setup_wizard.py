@@ -446,3 +446,118 @@ def test_save_current_page_skips_pages_without_state(tmp_path):
     # The gate check the wizard uses:
     assert not getattr(_FakePage(), "_has_state", False)
     assert getattr(_FakeStatefulPage(), "_has_state", False)
+
+
+# --- v1.3.5: per-feature status rows on wizard pages ------------------------
+
+
+def test_status_for_feature_returns_known_labels():
+    """`status_for_feature` returns one of the documented labels."""
+    from setup_wizard_pages import status_for_feature
+
+    # basic_editing has no asset, so it is always Ready.
+    s = status_for_feature("basic_editing")
+    assert s in ("Ready", "Off", "Needs download", "Not available in this build")
+    # pedalboard_effects has no asset either — should always be Ready
+    # (or Off if the user disabled it). Either way a known label.
+    s = status_for_feature("pedalboard_effects")
+    assert s in ("Ready", "Off", "Needs download", "Not available in this build")
+    # piper_tts with default flags (True) and no asset on disk → Ready
+    # (the feature flag is on, no asset to download → enabled).
+    s = status_for_feature("piper_tts")
+    assert s in ("Ready", "Off", "Needs download", "Not available in this build")
+
+
+def test_status_for_feature_unknown_feature_returns_unavailable():
+    """An unknown feature name returns the safe 'unavailable' label."""
+    from setup_wizard_pages import status_for_feature
+
+    assert status_for_feature("this_feature_does_not_exist") == \
+        "Not available in this build"
+
+
+def test_status_for_feature_disabled_when_flag_off(tmp_path, monkeypatch):
+    """If the user's flag is off, the status is 'Off'."""
+    from setup_wizard_pages import status_for_feature
+    from feature_flags import (
+        save_feature_flags, FeatureFlags, load_feature_flags,
+    )
+    import feature_flags
+
+    target = tmp_path / "setup.json"
+    save_feature_flags(
+        prefs_file=target,
+        flags=FeatureFlags(piper_tts=False),
+    )
+
+    # Make load_feature_flags() read from our temp file regardless of
+    # where status_for_feature() does its import from.
+    def _loader_for_target(*, prefs_file=None):
+        return load_feature_flags(prefs_file=target)
+
+    monkeypatch.setattr(feature_flags, "load_feature_flags", _loader_for_target)
+    # status_for_feature does a local import from feature_flags inside
+    # the function, so rebinding the symbol here is sufficient.
+
+    s = status_for_feature("piper_tts")
+    assert s == "Off"
+
+
+@needs_wx
+def test_editing_features_page_has_status_labels(wx_app):
+    """v1.3.5: each feature on the Editing page has a status row."""
+    if wx_app is None:
+        pytest.skip("wxPython not installed")
+    from setup_wizard_pages import EditingFeaturesPage
+    from feature_flags import FeatureFlags
+
+    frame = wx.Frame(None, wx.ID_ANY, "test")
+    try:
+        page = EditingFeaturesPage(parent=frame, flags=FeatureFlags())
+        # One status label per feature, populated with a known string.
+        from setup_wizard_pages import EDITING_PAGE_FEATURES
+        assert len(page._status_labels) == len(EDITING_PAGE_FEATURES)
+        for name, label in page._status_labels.items():
+            assert label.GetLabel().startswith("Status:")
+    finally:
+        page.Destroy()
+        frame.Destroy()
+
+
+@needs_wx
+def test_tts_engines_page_has_status_labels(wx_app):
+    """v1.3.5: each TTS engine on the TTS page has a status row."""
+    if wx_app is None:
+        pytest.skip("wxPython not installed")
+    from setup_wizard_pages import TTSEnginesPage
+    from feature_flags import FeatureFlags
+
+    frame = wx.Frame(None, wx.ID_ANY, "test")
+    try:
+        page = TTSEnginesPage(parent=frame, flags=FeatureFlags())
+        from setup_wizard_pages import TTS_PAGE_FEATURES
+        assert len(page._status_labels) == len(TTS_PAGE_FEATURES)
+        for name, label in page._status_labels.items():
+            assert label.GetLabel().startswith("Status:")
+    finally:
+        page.Destroy()
+        frame.Destroy()
+
+
+@needs_wx
+def test_summary_page_includes_status(wx_app):
+    """v1.3.5: the Summary page renders each feature's status."""
+    if wx_app is None:
+        pytest.skip("wxPython not installed")
+    from setup_wizard_pages import SummaryPage
+    from feature_flags import FeatureFlags
+
+    frame = wx.Frame(None, wx.ID_ANY, "test")
+    try:
+        page = SummaryPage(parent=frame, flags=FeatureFlags())
+        text = page._render_text()
+        # Status labels appear in the rendered text.
+        assert "Ready" in text or "Off" in text or "Needs download" in text
+    finally:
+        page.Destroy()
+        frame.Destroy()

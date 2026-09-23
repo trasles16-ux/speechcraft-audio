@@ -2663,11 +2663,19 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
                 monitor_btn.SetName("Toggle the live microphone level monitor. Currently stopped.")
                 level_gauge.SetValue(0)
                 level_text.SetLabel("Level: -∞ dB")
-        
+                # v1.3.5: re-call SetName so NVDA re-announces the reset value
+                level_text.SetName("Microphone level in decibels, currently minus infinity, updating live while the monitor is running")
+
         def update_level_display(level_percent, db_level):
             try:
                 level_gauge.SetValue(int(level_percent))
                 level_text.SetLabel(f"Level: {db_level:.1f} dB")
+                # v1.3.5: re-call SetName on every level tick so NVDA re-speaks
+                # when focus returns to the level readout.
+                level_text.SetName(
+                    f"Microphone level in decibels, currently {db_level:.1f}, "
+                    "updating live while the monitor is running"
+                )
             except:
                 pass
         

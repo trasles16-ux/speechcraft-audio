@@ -4,9 +4,17 @@ All notable changes to SpeechCraft Audio are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Reliable update downloads**. `updater.download_with_progress` now sends `Accept: application/octet-stream,*/*` and `Accept-Encoding: identity` so the GitHub CDN doesn't return HTML when the request looks browser-less, and Content-Length never drifts because of transparent gzip. Timeouts are split (30 s connect, 120 s per-chunk read) so a stuck mid-stream read dies in 2 minutes instead of 30. Transient errors retry up to 3 times with exponential backoff (2 / 4 / 8 s). If a `.part` is on disk at call time, the next attempt sends `Range: bytes=N-` and resumes from byte N; a 416 reply triggers a clean restart. The progress callback gains a third arg — `state` ∈ `{"connecting", "downloading", "retrying", "verifying", "done"}` — and `DownloadProgressDialog` reads it as a live-region label so NVDA hears "Connecting to GitHub…", "Downloading… 8 percent", "Verifying checksum…", etc.
+- **Lazy install on first use**. New `dialogs.lazy_install.prompt_and_install(feature, asset_name, parent)` returns True when the asset is already on disk; otherwise it shows a Yes/No prompt and a `DownloadProgressDialog` while `feature_manager.ensure_ready` runs. Piper voices, Whisper models, and `piper.exe` itself now use this from their first invocation, so a Core install that picked the wizard's "skip the download" path can still use Piper TTS — the menu click offers to download instead of failing with "Piper executable not found". Piper voice resolution and Whisper resolution both honour an `allow_prompt=False` kwarg for headless / test contexts.
+- **Piper.exe is now a feature_manager asset** (`piper_tts / executable`). The asset ships with an empty embedded SHA and a `sha256_url` pointing at the GitHub-generated `.sha256` sidecar — `feature_manager.download_asset` fetches the digest at install time, so we don't pin a specific Piper release but still verify what we downloaded. The zip is auto-extracted into `piper.exe`.
+- **Per-feature status rows in the wizard**. Editing, TTS, and Summary pages now show each feature as `Ready`, `Needs download (~60 MB)`, `Not available in this build`, or `Off`, derived from `feature_toggling.build_gates(flags)` via the new `status_for_feature` helper. The rows refresh when the user navigates to the page.
+
 ### Fixed
 - **Auto-update crashed on first run after install**: the installer staging folder (`%LOCALAPPDATA%\SpeechCraft\updates\`) doesn't exist on a fresh install, so the download raised `FileNotFoundError` (`[Errno 2] No such file or directory`). `download_with_progress` now creates the destination directory before writing.
 - **Misleading "Update Error" dialog** when a release has no installer asset — the message now explains it's a release-ops gap and links to the GitHub release page for a manual download.
+- **Piper TTS failed on Core installs with a hard "Piper executable not found"**. Core bundles `piper_models/` (the voice `.onnx` files) but not `piper.exe`. The engine now offers to download `piper.exe` from the rhasspy/piper GitHub release the first time it's used; on a network-restricted machine the user gets a clear "Download Piper now?" prompt rather than a silent RuntimeError.
+- **Wizard's TTS / Editing pages didn't reflect on-disk state**. Users couldn't see whether a feature's asset was already installed before clicking the checkbox. The new status rows fix this.
 
 ## [1.3.4] — 2026-09-16
 

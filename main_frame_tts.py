@@ -60,9 +60,11 @@ class TTSMenuMixin:
             return
 
         dlg = wx.Dialog(self, title="Edge TTS - Free Text-to-Speech", size=(550, 450))
+        dlg.SetName("Edge TTS dialog. Free Microsoft text-to-speech synthesis.")
         vbox = wx.BoxSizer(wx.VERTICAL)
 
         title = wx.StaticText(dlg, label="Edge TTS (Microsoft)")
+        title.SetName("Edge TTS (Microsoft), heading")
         title_font = title.GetFont()
         title_font.SetPointSize(12)
         title_font.SetWeight(wx.FONTWEIGHT_BOLD)
@@ -72,10 +74,14 @@ class TTSMenuMixin:
         info = wx.StaticText(
             dlg, label="Free, high-quality text-to-speech with South African voices"
         )
+        info.SetName("Free, high-quality text-to-speech with South African voices")
         vbox.Add(info, 0, wx.ALL | wx.ALIGN_CENTER, 5)
 
-        vbox.Add(wx.StaticText(dlg, label="Text to synthesize:"), 0, wx.ALL, 5)
+        text_label = wx.StaticText(dlg, label="Text to synthesize:")
+        text_label.SetName("Text to synthesize")
+        vbox.Add(text_label, 0, wx.ALL, 5)
         text_ctrl = wx.TextCtrl(dlg, style=wx.TE_MULTILINE, size=(-1, 100))
+        text_ctrl.SetName("Text to synthesize, multiline edit box")
         text_ctrl.SetValue("Hello, this is a test of Edge TTS.")
         vbox.Add(text_ctrl, 1, wx.EXPAND | wx.ALL, 5)
 
@@ -83,28 +89,38 @@ class TTSMenuMixin:
         voices = list(engine.get_all_voices().keys())
 
         voice_box = wx.BoxSizer(wx.HORIZONTAL)
-        voice_box.Add(wx.StaticText(dlg, label="Voice:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 5)
+        voice_label = wx.StaticText(dlg, label="Voice:")
+        voice_label.SetName("Voice")
+        voice_box.Add(voice_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 5)
         voice_choice = wx.Choice(dlg, choices=voices)
         voice_choice.SetName("Edge TTS voice")  # NVDA: announces the role instead of "unknown"
         voice_choice.SetSelection(0)  # Default to first SA voice
-        voice_box.Add(voice_choice, 1, wx.ALL, 5)
+        voice_box.Add(voice_choice, 1, wx.EXPAND | wx.ALL, 5)
         vbox.Add(voice_box, 0, wx.EXPAND | wx.ALL, 5)
 
         speed_box = wx.BoxSizer(wx.HORIZONTAL)
-        speed_box.Add(wx.StaticText(dlg, label="Speed:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 5)
+        speed_label = wx.StaticText(dlg, label="Speed:")
+        speed_label.SetName("Speed")
+        speed_box.Add(speed_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 5)
         speed_slider = wx.Slider(dlg, value=0, minValue=-50, maxValue=50, style=wx.SL_HORIZONTAL | wx.SL_LABELS)
+        speed_slider.SetName("Speech rate. Positive is faster, negative is slower. Default zero.")
         speed_box.Add(speed_slider, 1, wx.ALL, 5)
         vbox.Add(speed_box, 0, wx.EXPAND | wx.ALL, 5)
 
         pitch_box = wx.BoxSizer(wx.HORIZONTAL)
-        pitch_box.Add(wx.StaticText(dlg, label="Pitch:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 5)
+        pitch_label = wx.StaticText(dlg, label="Pitch:")
+        pitch_label.SetName("Pitch")
+        pitch_box.Add(pitch_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 5)
         pitch_slider = wx.Slider(dlg, value=0, minValue=-50, maxValue=50, style=wx.SL_HORIZONTAL | wx.SL_LABELS)
+        pitch_slider.SetName("Voice pitch. Positive is higher, negative is lower. Default zero.")
         pitch_box.Add(pitch_slider, 1, wx.ALL, 5)
         vbox.Add(pitch_box, 0, wx.EXPAND | wx.ALL, 5)
 
         btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
         synthesize_btn = wx.Button(dlg, wx.ID_OK, label="Synthesize")
+        synthesize_btn.SetName("Synthesize speech with the selected voice and settings")
         cancel_btn = wx.Button(dlg, wx.ID_CANCEL, label="Cancel")
+        cancel_btn.SetName("Cancel and close the dialog")
         btn_sizer.Add(synthesize_btn, 0, wx.ALL, 5)
         btn_sizer.Add(cancel_btn, 0, wx.ALL, 5)
         vbox.Add(btn_sizer, 0, wx.ALIGN_CENTER | wx.ALL, 10)
@@ -192,33 +208,45 @@ class TTSMenuMixin:
 
         # Validate engine before opening the dialog so a missing piper.exe
         # surfaces as a clear message instead of crashing the dialog mid-build.
+        # v1.3.5: pass parent=self so PiperTTSEngine can prompt for and
+        # download piper.exe + voices on first use.
         try:
-            PiperTTSEngine()
+            self._piper_engine = PiperTTSEngine(parent=self)
         except RuntimeError as exc:
             wx.MessageBox(str(exc), "Piper TTS — Setup Error", wx.ICON_ERROR)
             return
 
         dlg = wx.Dialog(self, title="Piper TTS — On-device Neural", size=(550, 450))
+        dlg.SetName("Piper TTS dialog. On-device neural text-to-speech, runs offline.")
         vbox = wx.BoxSizer(wx.VERTICAL)
 
         title = wx.StaticText(dlg, label="Piper TTS (On-device Neural)")
-        title.GetFont().SetPointSize(12)
-        title.GetFont().SetWeight(wx.FONTWEIGHT_BOLD)
+        title.SetName("Piper TTS (On-device Neural), heading")
+        title_font = title.GetFont()
+        title_font.SetPointSize(12)
+        title_font.SetWeight(wx.FONTWEIGHT_BOLD)
+        title.SetFont(title_font)
         vbox.Add(title, 0, wx.ALL | wx.ALIGN_CENTER, 10)
 
         info = wx.StaticText(
             dlg, label="High-quality neural TTS that runs locally — no internet required"
         )
+        info.SetName("High-quality neural TTS that runs locally, no internet required")
         vbox.Add(info, 0, wx.ALL | wx.ALIGN_CENTER, 5)
 
-        vbox.Add(wx.StaticText(dlg, label="Text to synthesize:"), 0, wx.ALL, 5)
+        text_label = wx.StaticText(dlg, label="Text to synthesize:")
+        text_label.SetName("Text to synthesize")
+        vbox.Add(text_label, 0, wx.ALL, 5)
         text_ctrl = wx.TextCtrl(dlg, style=wx.TE_MULTILINE, size=(-1, 100))
+        text_ctrl.SetName("Text to synthesize, multiline edit box")
         text_ctrl.SetValue("Hello, this is a test of Piper TTS.")
         vbox.Add(text_ctrl, 1, wx.EXPAND | wx.ALL, 5)
 
         voices = list(PiperTTSEngine.get_voices().keys())
         voice_box = wx.BoxSizer(wx.HORIZONTAL)
-        voice_box.Add(wx.StaticText(dlg, label="Voice:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 5)
+        voice_label = wx.StaticText(dlg, label="Voice:")
+        voice_label.SetName("Voice")
+        voice_box.Add(voice_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 5)
         voice_choice = wx.Choice(dlg, choices=voices)
         voice_choice.SetName("Piper voice")  # NVDA: announces "Piper voice list" instead of "unknown"
         voice_choice.SetSelection(0)
@@ -227,7 +255,9 @@ class TTSMenuMixin:
 
         btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
         synthesize_btn = wx.Button(dlg, wx.ID_OK, label="Synthesize")
+        synthesize_btn.SetName("Synthesize speech with the selected voice")
         cancel_btn = wx.Button(dlg, wx.ID_CANCEL, label="Cancel")
+        cancel_btn.SetName("Cancel and close the dialog")
         btn_sizer.Add(synthesize_btn, 0, wx.ALL, 5)
         btn_sizer.Add(cancel_btn, 0, wx.ALL, 5)
         vbox.Add(btn_sizer, 0, wx.ALIGN_CENTER | wx.ALL, 10)
@@ -257,8 +287,11 @@ class TTSMenuMixin:
 
                 def synthesize_worker():
                     try:
-                        tts_engine = PiperTTSEngine()
-                        result[0] = tts_engine.synthesize(text, voice_name)
+                        # Re-use the engine we validated when the menu
+                        # item opened. Both the engine and the per-voice
+                        # model already passed the lazy-install gate.
+                        engine = getattr(self, "_piper_engine", None) or PiperTTSEngine(parent=self)
+                        result[0] = engine.synthesize(text, voice_name)
                     except Exception as exc:
                         error[0] = str(exc)
 

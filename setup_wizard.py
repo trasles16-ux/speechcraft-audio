@@ -240,6 +240,14 @@ class SetupWizardDialog(wx.Dialog):
         # chosen on the Editing / TTS pages.
         if self._notebook.GetCurrentPage() is self._download:
             self._download.refresh()
+        # v1.3.5: Editing + TTS pages have per-feature status rows
+        # (Ready / Needs download / Not available). Refresh on entry so
+        # the labels reflect the latest asset state.
+        current = self._notebook.GetCurrentPage()
+        if current in (self._editing, self._tts):
+            refresh = getattr(current, "_refresh_status", None)
+            if refresh is not None:
+                refresh()
         # NVDA: land focus on the new page's heading so the screen
         # reader announces the page the user just arrived at.
         self._focus_page_content()

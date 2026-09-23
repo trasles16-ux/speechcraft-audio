@@ -46,7 +46,12 @@ import preset_manager
 # Accessibility helpers. Centralised in dialogs/_a11y.py so the same
 # accessible-name conventions apply to every dialog in this file (and
 # the recording dialogs). See that module for the conventions.
-from dialogs._a11y import name_dialog, name_group, name_widget
+from dialogs._a11y import (
+    bind_escape_to_cancel,
+    name_dialog,
+    name_group,
+    name_widget,
+)
 
 class AudioClipboard:
     """Stores cut audio segments and their associated word segments for pasting"""
@@ -72,6 +77,8 @@ class EffectSettingsDialog(wx.Dialog):
         super().__init__(parent, title=title)
         # Accessible name: NVDA otherwise reads 'dialog'.
         name_dialog(self, title)
+        # v1.3.6: keyboard accessibility — Escape dismisses the dialog.
+        bind_escape_to_cancel(self)
         self.params = params
         self.controls = {}
 
@@ -142,6 +149,8 @@ class BreathSmoothingPresetDialog(wx.Dialog):
         # bug was the same: every control in this dialog had a default
         # wx accessible name rather than the label NVDA expects.
         self.SetName(title)
+        # v1.3.6: keyboard accessibility — Escape dismisses the dialog.
+        bind_escape_to_cancel(self)
         built_in = [k for k in config.BREATH_SMOOTHING_LEVELS if k != "Disabled"]
         custom = self._load_custom_names()
         self.preset_names = built_in + custom
@@ -349,7 +358,11 @@ class BreathSmoothingPresetDialog(wx.Dialog):
             mix_hint = f"Full ({mix}% effect) — maximum breath reduction"
 
         self.sens_pct_st.SetLabel(sens_hint)
+        # v1.3.6: re-call SetName so NVDA re-announces when the user
+        # navigates back to the slider's hint label.
+        self.sens_pct_st.SetName(f"Sensitivity hint: {sens_hint}")
         self.mix_pct_st.SetLabel(mix_hint)
+        self.mix_pct_st.SetName(f"Effect amount hint: {mix_hint}")
         self.SetSizerAndFit()
 
     def get_values(self):
@@ -435,15 +448,21 @@ class BreathSmoothingPresetDialog(wx.Dialog):
             return
 
         dlg = wx.Dialog(self, title="Manage Custom Breath Smoothing Presets", size=(450, 350))
+        name_dialog(dlg, "Manage custom breath smoothing presets")
         sizer = wx.BoxSizer(wx.VERTICAL)
-        sizer.Add(wx.StaticText(dlg, label="Select a preset to delete:"), 0, wx.ALL, 8)
+        list_label = wx.StaticText(dlg, label="Select a preset to delete:")
+        name_widget(list_label, "Select a preset to delete")
+        sizer.Add(list_label, 0, wx.ALL, 8)
 
         list_ctrl = wx.ListBox(dlg, choices=custom, style=wx.LB_SINGLE)
+        name_widget(list_ctrl, "Custom breath smoothing presets")
         sizer.Add(list_ctrl, 1, wx.EXPAND | wx.ALL, 8)
 
         btn_row = wx.BoxSizer(wx.HORIZONTAL)
         delete_btn = wx.Button(dlg, label="Delete")
+        name_widget(delete_btn, "Delete the selected preset")
         close_btn = wx.Button(dlg, wx.ID_CLOSE)
+        name_widget(close_btn, "Close the dialog")
         btn_row.AddMany([(delete_btn, 0, wx.ALL, 4), (wx.StaticText(dlg, label=""), 1, wx.EXPAND), (close_btn, 0, wx.ALL, 4)])
         sizer.Add(btn_row, 0, wx.ALL | wx.ALIGN_RIGHT, 8)
 
@@ -478,6 +497,8 @@ class CompressorPresetDialog(wx.Dialog):
         super().__init__(parent, title=title)
         # Accessible name: NVDA otherwise reads 'dialog'.
         name_dialog(self, title)
+        # v1.3.6: keyboard accessibility — Escape dismisses the dialog.
+        bind_escape_to_cancel(self)
         self.preset_names = list(config.COMPRESSOR_PRESETS.keys()) + self._load_custom_names()
         self.selected_preset = "Voiceover/broadcast"
         self.show_advanced = False
@@ -660,9 +681,13 @@ class CompressorPresetDialog(wx.Dialog):
             val = vals.get(key, "")
             # Human-readable label for attack
             if key == "Attack (x0.1ms)":
-                st.SetLabel(f"{vals[key]} (={vals[key]*0.1:.1f}ms)")
+                label_text = f"{vals[key]} (={vals[key]*0.1:.1f}ms)"
             else:
-                st.SetLabel(str(val))
+                label_text = str(val)
+            st.SetLabel(label_text)
+            # v1.3.6: re-call SetName on every value change so NVDA hears
+            # the new value when focus lands back on the label.
+            st.SetName(f"{key} current value: {label_text}")
         self.right_sizer.Layout()
         self.right_sizer.Fit(self.right_panel)
 
@@ -754,15 +779,21 @@ class CompressorPresetDialog(wx.Dialog):
             return
 
         dlg = wx.Dialog(self, title="Manage Custom Compressor Presets", size=(450, 350))
+        name_dialog(dlg, "Manage custom compressor presets")
         sizer = wx.BoxSizer(wx.VERTICAL)
-        sizer.Add(wx.StaticText(dlg, label="Select a preset to delete:"), 0, wx.ALL, 8)
+        list_label = wx.StaticText(dlg, label="Select a preset to delete:")
+        name_widget(list_label, "Select a preset to delete")
+        sizer.Add(list_label, 0, wx.ALL, 8)
 
         list_ctrl = wx.ListBox(dlg, choices=custom, style=wx.LB_SINGLE)
+        name_widget(list_ctrl, "Custom compressor presets")
         sizer.Add(list_ctrl, 1, wx.EXPAND | wx.ALL, 8)
 
         btn_row = wx.BoxSizer(wx.HORIZONTAL)
         delete_btn = wx.Button(dlg, label="Delete")
+        name_widget(delete_btn, "Delete the selected preset")
         close_btn = wx.Button(dlg, wx.ID_CLOSE)
+        name_widget(close_btn, "Close the dialog")
         btn_row.AddMany([(delete_btn, 0, wx.ALL, 4), (wx.StaticText(dlg, label=""), 1, wx.EXPAND), (close_btn, 0, wx.ALL, 4)])
         sizer.Add(btn_row, 0, wx.ALL | wx.ALIGN_RIGHT, 8)
 
@@ -795,6 +826,8 @@ class EQPresetDialog(wx.Dialog):
 
     def __init__(self, parent, title="Equalizer — Voice Presets"):
         super().__init__(parent, title=title)
+        # v1.3.6: keyboard accessibility — Escape dismisses the dialog.
+        bind_escape_to_cancel(self)
         # Accessible name: NVDA otherwise reads 'dialog'.
         name_dialog(self, title)
         self.preset_names = list(config.EQ_PRESETS.keys()) + self._load_custom_names()
@@ -956,7 +989,11 @@ class EQPresetDialog(wx.Dialog):
         for label, slider in self.band_sliders.items():
             val = slider.GetValue()
             sign = "+" if val > 0 else ""
-            self.band_labels[label].SetLabel(f"{sign}{val} dB")
+            label_text = f"{sign}{val} dB"
+            self.band_labels[label].SetLabel(label_text)
+            # v1.3.6: re-call SetName so NVDA re-announces when focus
+            # returns to the band label after the slider moves.
+            self.band_labels[label].SetName(f"{label} current gain: {label_text}")
 
     def _update_display(self):
         # Lazy import: audio_effects depends on pedalboard (Full-only).
@@ -969,7 +1006,9 @@ class EQPresetDialog(wx.Dialog):
             bands = eq.get(self.selected_preset, {}).get("bands", [(0, 0)] * 5)
         for (freq, gain), label in zip(bands, audio_effects.Equalizer.BAND_LABELS):
             sign = "+" if gain > 0 else ""
-            self.band_labels[label].SetLabel(f"{sign}{gain} dB")
+            label_text = f"{sign}{gain} dB"
+            self.band_labels[label].SetLabel(label_text)
+            self.band_labels[label].SetName(f"{label} current gain: {label_text}")
 
         # If advanced is open, sync sliders too
         if self.show_advanced:
@@ -1060,15 +1099,21 @@ class EQPresetDialog(wx.Dialog):
 
         # Simple list with Delete buttons
         dlg = wx.Dialog(self, title="Manage Custom EQ Presets", size=(450, 350))
+        name_dialog(dlg, "Manage custom equalizer presets")
         sizer = wx.BoxSizer(wx.VERTICAL)
-        sizer.Add(wx.StaticText(dlg, label="Select a preset to delete:"), 0, wx.ALL, 8)
+        list_label = wx.StaticText(dlg, label="Select a preset to delete:")
+        name_widget(list_label, "Select a preset to delete")
+        sizer.Add(list_label, 0, wx.ALL, 8)
 
         list_ctrl = wx.ListBox(dlg, choices=custom, style=wx.LB_SINGLE)
+        name_widget(list_ctrl, "Custom equalizer presets")
         sizer.Add(list_ctrl, 1, wx.EXPAND | wx.ALL, 8)
 
         btn_row = wx.BoxSizer(wx.HORIZONTAL)
         delete_btn = wx.Button(dlg, label="Delete")
+        name_widget(delete_btn, "Delete the selected preset")
         close_btn = wx.Button(dlg, wx.ID_CLOSE)
+        name_widget(close_btn, "Close the dialog")
         btn_row.AddMany([(delete_btn, 0, wx.ALL, 4), (wx.StaticText(dlg, label=""), 1, wx.EXPAND), (close_btn, 0, wx.ALL, 4)])
         sizer.Add(btn_row, 0, wx.ALL | wx.ALIGN_RIGHT, 8)
 
@@ -1114,6 +1159,8 @@ class RoomToneMatchDialog(wx.Dialog):
                         size=(460, 430), style=wx.DEFAULT_DIALOG_STYLE)
         # Accessible name: NVDA otherwise reads 'dialog'.
         name_dialog(self, "Room Tone Match")
+        # v1.3.6: keyboard accessibility — Escape dismisses the dialog.
+        bind_escape_to_cancel(self)
         self.track_names = track_names
         self.track_durations = track_durations
         self.selected_track = 0
@@ -1245,15 +1292,15 @@ class RoomToneMatchDialog(wx.Dialog):
 
         # --- Buttons ---
         btn_row = wx.BoxSizer(wx.HORIZONTAL)
-        cancel_btn = wx.Button(self, wx.ID_CANCEL)
         ok_btn = wx.Button(self, wx.ID_OK)
-        cancel_btn.SetName("Cancel, close dialog without creating the room-tone track")
+        cancel_btn = wx.Button(self, wx.ID_CANCEL)
         ok_btn.SetName("OK, create the room-tone track and close dialog")
+        cancel_btn.SetName("Cancel, close dialog without creating the room-tone track")
         ok_btn.SetDefault()
         btn_row.AddMany([
             ((1, 1), 1, wx.EXPAND),
-            (cancel_btn, 0, wx.ALL, 4),
             (ok_btn, 0, wx.ALL, 4),
+            (cancel_btn, 0, wx.ALL, 4),
         ])
         outer.Add(btn_row, 0, wx.EXPAND | wx.ALL, 8)
 
@@ -1358,6 +1405,8 @@ class BatchProcessDialog(wx.Dialog):
                         size=(700, 550), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         # Accessible name: NVDA otherwise reads 'dialog'.
         name_dialog(self, "Batch Process")
+        # v1.3.6: keyboard accessibility — Escape dismisses the dialog.
+        bind_escape_to_cancel(self)
         self.input_folder = ""
         self.output_folder = ""
         self.effect_type = "compressor"
@@ -1458,11 +1507,15 @@ class BatchProcessDialog(wx.Dialog):
             if which == "input":
                 self.input_folder = path
                 self.in_path_st.SetLabel(path)
+                # v1.3.6: re-call SetName so NVDA re-announces the chosen path
+                self.in_path_st.SetName(f"Input folder path: {path}")
                 self.in_path_st.SetForegroundColour(wx.Colour(0, 0, 0))
                 self._refresh_file_list()
             else:
                 self.output_folder = path
                 self.out_path_st.SetLabel(path)
+                # v1.3.6: re-call SetName so NVDA re-announces the chosen path
+                self.out_path_st.SetName(f"Output folder path: {path}")
                 self.out_path_st.SetForegroundColour(wx.Colour(0, 0, 0))
             self._update_buttons()
         dlg.Destroy()
@@ -1729,8 +1782,12 @@ class BatchProcessDialog(wx.Dialog):
         self.prev_btn.Enable(page > 0)
         if page == 2:
             self.next_btn.SetLabel("Process")
+            # v1.3.6: re-call SetName so NVDA re-announces when the button's
+            # role changes from "advance" to "start processing".
+            self.next_btn.SetName("Process the batch. Start the run on all selected files.")
         else:
             self.next_btn.SetLabel("Next >")
+            self.next_btn.SetName("Next >, advance to next batch step")
 
     def _on_prev(self, event):
         cur = self.notebook.GetSelection()
@@ -1770,6 +1827,8 @@ class BatchProcessDialog(wx.Dialog):
         self.prev_btn.Enable(False)
         self.cancel_btn.Enable(False)
         self.progress_st.SetLabel("Starting batch...")
+        # v1.3.6: re-call SetName so NVDA re-announces the start state
+        self.progress_st.SetName("Processing status, starting batch")
         self.progress_gauge.SetValue(0)
         self.log_ctrl.Clear()
 
@@ -1790,6 +1849,10 @@ class BatchProcessDialog(wx.Dialog):
             out_path = os.path.join(self.output_folder, f"{root}_processed{ext}")
 
             self.progress_st.SetLabel(f"Processing {i+1}/{total}: {basename}")
+            # v1.3.6: re-call SetName on every progress tick so NVDA re-speaks
+            self.progress_st.SetName(
+                f"Processing status, processing {i+1} of {total}: {basename}"
+            )
             self.log_ctrl.AppendText(f"[{i+1}/{total}] {basename} ... ")
             wx.Yield()
 
@@ -1808,11 +1871,17 @@ class BatchProcessDialog(wx.Dialog):
             wx.Yield()
 
         self.progress_st.SetLabel(f"Done. {ok_count} succeeded, {fail_count} failed.")
+        # v1.3.6: re-call SetName so NVDA re-announces the final result
+        self.progress_st.SetName(
+            f"Processing status, done. {ok_count} succeeded, {fail_count} failed."
+        )
         self.log_ctrl.AppendText(f"\nBatch complete: {ok_count} OK, {fail_count} failed.\n")
         self.next_btn.Enable(True)
         self.prev_btn.Enable(True)
         self.cancel_btn.Enable(True)
         self.next_btn.SetLabel("Close")
+        # v1.3.6: re-call SetName — button is now the dialog closer, not "Next >"
+        self.next_btn.SetName("Close the batch dialog")
 
         # Bind next button to close since we're on last page
         self.next_btn.Unbind()

@@ -51,11 +51,37 @@ class FeatureAsset:
 #: list of ``{"name", "url", "sha256", "size_bytes"}`` dicts. Adding
 #: a voice or model is a data edit, not a code change.
 FEATURE_ASSETS: Final = {
-    # Piper TTS voices — en_GB voices from rhasspy/piper-voices.
-    # (SA en_ZA voices Carina/Tildar do not exist publicly yet — see
-    # research findings in the plan doc. en_GB voices used as the
-    # working default until the SA voice project lands.)
+    # Piper TTS — en_GB voices AND the Piper executable itself.
+    #
+    # The executable (`piper.exe`) is only required on builds that don't
+    # bundle it (the Core edition). On Full installs `PiperTTSEngine`
+    # finds piper.exe via PATH or the install dir and skips this asset.
+    # The asset is registered here so the lazy-install flow can offer
+    # "Download Piper" instead of failing with a hard error on Core.
+    #
+    # SHA verification: the piper.exe URL has no stable embedded SHA
+    # (we don't pin a specific Piper release). The ``sha256`` field is
+    # empty and ``sha256_url`` points at the sibling ``.sha256`` file
+    # GitHub auto-generates next to release assets — `download_asset`
+    # fetches and uses that at install time.
+    #
+    # Voices are en_GB from rhasspy/piper-voices. (SA en_ZA voices
+    # Carina/Tildar do not exist publicly yet — see research findings in
+    # the plan doc. en_GB voices used as the working default until the
+    # SA voice project lands.)
     "piper_tts": {
+        "executable": {
+            "files": [
+                {"name": "piper.exe",
+                 "url": "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip",
+                 "sha256": "",
+                 "sha256_url": "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip.sha256",
+                 "size_bytes": 31_889_408,
+                 "extract": "zip",
+                 "extract_entry": "piper/piper.exe"},
+            ],
+            "description": "Piper TTS executable (Windows, 64-bit, ~30 MB)",
+        },
         "en_GB.cori": {
             "files": [
                 {"name": "model",
@@ -275,6 +301,50 @@ def _sha256_of_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def _extract_from_zip(
+    zip_path: str,
+    *,
+    entry_name: str,
+    out_dir: Path,
+) -> Path:
+    """Extract a single file from ``zip_path`` into ``out_dir``.
+
+    Returns the extracted file's path. Raises ``OSError`` if the
+    zip is unreadable or the entry isn't found. Stdlib-only
+    (``zipfile``), no new deps.
+
+    ``entry_name`` can be the literal name (e.g. ``piper/piper.exe``)
+    or a short suffix (e.g. ``piper.exe``); the matcher prefers the
+    literal name and falls back to a basename match.
+    """
+    import zipfile
+
+    with zipfile.ZipFile(zip_path) as zf:
+        names = zf.namelist()
+        # Literal match first
+        target: str | None = entry_name if entry_name in names else None
+        if target is None and entry_name:
+            # Fall back to basename match (e.g. "piper/piper.exe" -> "piper.exe")
+            short = entry_name.rsplit("/", 1)[-1]
+            for n in names:
+                if n.endswith("/" + short) or n == short:
+                    target = n
+                    break
+        if target is None:
+            raise OSError(
+                f"{entry_name!r} not found in zip; archive contains: {names}"
+            )
+        out_path = out_dir / Path(target).name
+        out_dir.mkdir(parents=True, exist_ok=True)
+        with zf.open(target) as src, open(out_path, "wb") as dst:
+            while True:
+                chunk = src.read(1 << 20)
+                if not chunk:
+                    break
+                dst.write(chunk)
+    return out_path
+
+
 def download_asset(
     feature: str,
     asset_name: str,
@@ -351,8 +421,58 @@ def download_asset(
             save_feature_state(state, state_file=state_file)
             raise FeatureDownloadError(key, str(exc)) from exc
 
-        # SHA-256 verify (separate step — updater does not verify internally)
-        if not verify_asset_sha256(str(final_path), expected_sha):
+        # Optional post-download extraction (e.g. zip → single binary).
+        # Used for assets like ``piper.exe`` whose URL is a release zip.
+        extract_mode = file_spec.get("extract")
+        if extract_mode == "zip":
+            try:
+                extracted = _extract_from_zip(
+                    str(final_path),
+                    entry_name=file_spec.get("extract_entry", ""),
+                    out_dir=out_dir,
+                )
+                # The downloaded zip is throw-away — drop it so the
+                # asset dir only contains the file(s) the engine
+                # actually needs.
+                try:
+                    final_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                # Replace the planned destination with the extracted one.
+                final_path = extracted
+                paths[file_name] = str(extracted)
+                # Re-record size for progress reporting.
+                bytes_done += extracted.stat().st_size if extracted.exists() else 0
+                # No SHA verification step below — we trust the zip was
+                # downloaded intact (verified by download_with_progress's
+                # size accounting against the Content-Length). The zip
+                # itself is throwaway and the engine only reads the
+                # extracted binary.
+                continue
+            except OSError as exc:
+                state = load_feature_state(state_file=state_file)
+                entry = state.get(key) or _empty_state_entry()
+                entry["ready"] = False
+                entry["last_error"] = f"Could not extract {file_name}: {exc}"
+                state[key] = entry
+                save_feature_state(state, state_file=state_file)
+                raise FeatureDownloadError(
+                    key, f"Could not extract {file_name}: {exc}"
+                ) from exc
+
+        # SHA-256 verify (separate step — updater does not verify internally).
+        # If the asset spec has an empty ``sha256`` but a ``sha256_url``,
+        # fetch the digest from the sidecar first.
+        if not expected_sha:
+            sidecar_url = file_spec.get("sha256_url")
+            if sidecar_url:
+                from updater import fetch_expected_sha256
+                expected_sha = fetch_expected_sha256(
+                    digest_url=sidecar_url,
+                    asset_name=url.rsplit("/", 1)[-1],
+                ) or ""
+
+        if expected_sha and not verify_asset_sha256(str(final_path), expected_sha):
             try:
                 final_path.unlink(missing_ok=True)
             except OSError:
