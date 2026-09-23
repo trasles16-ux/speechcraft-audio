@@ -2,7 +2,7 @@
 
 All notable changes to SpeechCraft Audio are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/) as far as a single-developer desktop app can.
 
-## [Unreleased]
+## [1.3.5] — 2026-09-23
 
 ### Added
 - **Reliable update downloads**. `updater.download_with_progress` now sends `Accept: application/octet-stream,*/*` and `Accept-Encoding: identity` so the GitHub CDN doesn't return HTML when the request looks browser-less, and Content-Length never drifts because of transparent gzip. Timeouts are split (30 s connect, 120 s per-chunk read) so a stuck mid-stream read dies in 2 minutes instead of 30. Transient errors retry up to 3 times with exponential backoff (2 / 4 / 8 s). If a `.part` is on disk at call time, the next attempt sends `Range: bytes=N-` and resumes from byte N; a 416 reply triggers a clean restart. The progress callback gains a third arg — `state` ∈ `{"connecting", "downloading", "retrying", "verifying", "done"}` — and `DownloadProgressDialog` reads it as a live-region label so NVDA hears "Connecting to GitHub…", "Downloading… 8 percent", "Verifying checksum…", etc.

@@ -1,4 +1,4 @@
-SpeechCraft Studio 1.3.4 - Full Edition
+SpeechCraft Studio 1.3.5 - Full Edition
 =======================================
 
 You installed the FULL edition: every engine and model bundled.
@@ -20,6 +20,13 @@ engines required.
 If a feature still asks to download a model file, that file
 downloads on first use; the wizard's Download page can fetch
 everything up front.
+
+LAZY INSTALL on first use (v1.3.5)
+----------------------------------
+If you disable a feature in the wizard and later re-enable it, the
+asset is downloaded the next time you use the feature - SpeechCraft
+will offer to download with a Yes/No prompt and a progress bar.
+SHA-256 verification protects every download.
 
 Want a lighter, faster-starting build instead? Re-run the
 installer and choose the Core edition. It keeps your settings

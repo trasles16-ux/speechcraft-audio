@@ -1,6 +1,6 @@
 #: SpeechCraft Studio version. Bumped in lockstep with the NSIS installer
 #: version (installer/speechcraft_setup.nsi) and with the GitHub release tag.
-__version__ = "1.3.4"
+__version__ = "1.3.5"
 
 import wx
 import os

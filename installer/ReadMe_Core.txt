@@ -1,4 +1,4 @@
-SpeechCraft Studio 1.3.4 - Core Edition
+SpeechCraft Studio 1.3.5 - Core Edition
 =======================================
 
 You installed the CORE edition: a lean, fast-starting build.
@@ -24,3 +24,11 @@ telling you the pedalboard engine is not installed - it is not a
 broken feature. If you need those effects, re-run the installer
 and choose the Full edition. It installs over Core and keeps your
 settings and projects.
+
+LAZY INSTALL on first use (v1.3.5)
+----------------------------------
+Core does NOT bundle piper.exe. The first time you click
+Speech > Piper TTS, SpeechCraft offers to download piper.exe from
+the official rhasspy/piper GitHub release (~30 MB). The download
+is SHA-256 verified and lands under %APPDATA%\SpeechCraft. You only
+pay the cost once - the next click is instant.
