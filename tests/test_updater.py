@@ -202,3 +202,339 @@ def test_verify_asset_sha256_false_on_mismatch(tmp_path):
     p = tmp_path / "blob.bin"
     p.write_bytes(b"hello world")
     assert verify_asset_sha256(str(p), "0" * 64) is False
+
+
+# --- Task: v1.3.5 update-download reliability --------------------------------
+
+
+def test_download_sends_accept_headers(tmp_path):
+    """The download must include Accept: application/octet-stream and
+    Accept-Encoding: identity. Without these, GitHub's CDN sometimes
+    responds with HTML (a 'Terms of Service' interstitial) and the
+    progress bar sits at 0% while the bytes never land on disk.
+    """
+    import http.server
+    import threading
+
+    captured: dict[str, str] = {}
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            for k, v in self.headers.items():
+                captured[k] = v
+            payload = b"x" * 8
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args):
+            pass
+
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+
+    try:
+        dest = tmp_path / "out.bin"
+        download_with_progress(
+            f"http://127.0.0.1:{port}/x",
+            str(dest),
+            timeout_s=10.0,
+        )
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+    assert captured.get("Accept") == "application/octet-stream,*/*"
+    assert captured.get("Accept-Encoding") == "identity"
+    assert "SpeechCraft-Studio-UpdateChecker" in captured.get("User-Agent", "")
+
+
+def test_download_progress_cb_receives_state(tmp_path):
+    """The progress callback gets the new ``state`` string so the UI can
+    distinguish "connecting" from "downloading" from "verifying"."""
+    import http.server
+    import threading
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            payload = b"P" * 4096
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args):
+            pass
+
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+
+    states_seen: list[str] = []
+
+    def _cb(downloaded: int, total: int, state: str) -> None:
+        states_seen.append(state)
+
+    try:
+        download_with_progress(
+            f"http://127.0.0.1:{port}/x",
+            str(tmp_path / "out.bin"),
+            progress_cb=_cb,
+            timeout_s=10.0,
+        )
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+    # At minimum we expect the connecting handshake, at least one
+    # downloading chunk, and the final verifying + done transitions.
+    assert "connecting" in states_seen
+    assert "downloading" in states_seen
+    assert "verifying" in states_seen
+    assert "done" in states_seen
+
+
+def test_download_progress_cb_legacy_two_arg_still_works(tmp_path):
+    """Old callers using the 2-arg ``(downloaded, total)`` signature must
+    keep working — the wrapper drops the state argument for them."""
+    import http.server
+    import threading
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            payload = b"Q" * 512
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args):
+            pass
+
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+
+    received: list[tuple[int, int]] = []
+
+    def _legacy_cb(downloaded: int, total: int) -> None:
+        received.append((downloaded, total))
+
+    try:
+        download_with_progress(
+            f"http://127.0.0.1:{port}/x",
+            str(tmp_path / "out.bin"),
+            progress_cb=_legacy_cb,
+            timeout_s=10.0,
+        )
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+    assert received, "legacy 2-arg callback was never invoked"
+    # Last tick should have downloaded == total (full payload arrived).
+    assert received[-1][0] == received[-1][1] == 512
+
+
+def test_download_retries_on_transient_url_error(tmp_path, monkeypatch):
+    """A single transient error on attempt 1 must be retried; attempt 2
+    succeeds. The final on-disk file is the full payload."""
+    import http.server
+    import threading
+
+    get_count = {"n": 0}
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            get_count["n"] += 1
+            if get_count["n"] == 1:
+                # Hang the connection closed without sending any bytes so
+                # urllib raises a URLError.
+                self.close_connection = True
+                return
+            payload = b"R" * 256
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args):
+            pass
+
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+
+    # Patch the retry backoff down to nothing so the test stays fast.
+    import updater
+    monkeypatch.setattr(updater, "RETRY_BACKOFF_S", (0.0, 0.0, 0.0))
+
+    try:
+        dest = tmp_path / "out.bin"
+        download_with_progress(
+            f"http://127.0.0.1:{port}/x",
+            str(dest),
+            timeout_s=10.0,
+        )
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+    assert get_count["n"] >= 2  # we did retry
+    assert dest.read_bytes() == b"R" * 256
+
+
+def test_download_resumes_from_existing_part(tmp_path):
+    """If a `.part` file is on disk at call time, the next attempt sends
+    ``Range: bytes=N-`` and the final file is the concatenation of the
+    .part bytes and the new bytes."""
+    import http.server
+    import threading
+
+    pre = b"X" * 256
+    remaining = b"Y" * 256
+    full = pre + remaining
+
+    dest = tmp_path / "setup.exe"
+    part = dest.with_suffix(dest.suffix + ".part")
+    part.write_bytes(pre)
+
+    captured_range: list[str | None] = []
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            captured_range.append(self.headers.get("Range"))
+            if self.headers.get("Range"):
+                self.send_response(206)
+                self.send_header(
+                    "Content-Range",
+                    f"bytes {len(pre)}-{len(full) - 1}/{len(full)}",
+                )
+                self.send_header("Content-Length", str(len(remaining)))
+                self.end_headers()
+                self.wfile.write(remaining)
+            else:
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(full)))
+                self.end_headers()
+                self.wfile.write(full)
+
+        def log_message(self, *args):
+            pass
+
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+
+    try:
+        download_with_progress(
+            f"http://127.0.0.1:{port}/x",
+            str(dest),
+            timeout_s=10.0,
+        )
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+    assert captured_range and captured_range[0] == f"bytes={len(pre)}-"
+    assert dest.read_bytes() == full
+    assert not part.exists()
+
+
+def test_download_restarts_from_zero_on_416(tmp_path):
+    """When the server replies 416 Range Not Satisfiable, the downloader
+    discards the .part and retries from byte 0."""
+    import http.server
+    import threading
+
+    payload = b"Z" * 128
+    dest = tmp_path / "setup.exe"
+    part = dest.with_suffix(dest.suffix + ".part")
+    part.write_bytes(b"stale-bytes-that-arent-from-this-build" * 100)
+
+    attempt_count = {"n": 0}
+    captured_ranges: list[str | None] = []
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            attempt_count["n"] += 1
+            rng = self.headers.get("Range")
+            captured_ranges.append(rng)
+            if attempt_count["n"] == 1 and rng:
+                self.send_response(416)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args):
+            pass
+
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+
+    import updater
+    original = updater.RETRY_BACKOFF_S
+    updater.RETRY_BACKOFF_S = (0.0, 0.0, 0.0)
+    try:
+        download_with_progress(
+            f"http://127.0.0.1:{port}/x",
+            str(dest),
+            timeout_s=10.0,
+        )
+    finally:
+        updater.RETRY_BACKOFF_S = original
+        httpd.shutdown()
+        httpd.server_close()
+
+    assert attempt_count["n"] == 2
+    assert dest.read_bytes() == payload
+    assert not part.exists()
+
+
+def test_download_cancel_stops_without_retry(tmp_path):
+    """User cancel must NOT trigger a retry — the worker is gone."""
+    import http.server
+    import threading
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            payload = b"C" * 4096
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args):
+            pass
+
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+
+    cancelled = {"v": False}
+
+    def _is_cancelled() -> bool:
+        return cancelled["v"]
+
+    try:
+        cancelled["v"] = True
+        from updater import UpdateCheckError
+        with pytest.raises(UpdateCheckError, match="cancelled"):
+            download_with_progress(
+                f"http://127.0.0.1:{port}/x",
+                str(tmp_path / "out.bin"),
+                cancel_check=_is_cancelled,
+                timeout_s=10.0,
+            )
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+    assert not (tmp_path / "out.bin.part").exists()

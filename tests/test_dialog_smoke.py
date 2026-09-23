@@ -1364,7 +1364,10 @@ def test_download_progress_dialog_constructs(wx_app):
     )
     try:
         # Simulate progress to make sure the update path doesn't blow up.
-        dlg.update(25_000_000)
+        # v1.3.5: update() now takes (state, downloaded_bytes, total_bytes).
+        dlg.update("downloading", 25_000_000, 50_000_000)
+        dlg.update("verifying", 50_000_000, 50_000_000)
+        dlg.update("done", 50_000_000, 50_000_000)
         assert dlg.is_cancelled() is False
         # Force the cancel flag so we can verify the polling helper works.
         dlg._cancelled = True

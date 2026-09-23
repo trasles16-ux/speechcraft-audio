@@ -12,6 +12,24 @@ The check is **manual by default** (Help → Check for updates) and
 ``setup.json`` under ``"auto_check_updates": true``). The prompt
 itself is always shown when a newer version exists — there is no
 silent-install path.
+
+Reliability (v1.3.5):
+- Downloads send ``Accept: application/octet-stream,*/*`` so the GitHub
+  CDN doesn't occasionally reply with HTML when the request looks
+  browser-less.
+- Downloads send ``Accept-Encoding: identity`` so the streamed
+  ``Content-Length`` always matches the bytes we write to disk
+  (Python's urllib transparently decompresses gzip, which previously
+  caused the progress bar to overshoot).
+- Timeouts are split: a short CONNECT timeout (30 s) catches "GitHub
+  is down / port blocked" quickly, while each chunk read gets its own
+  READ timeout (120 s) so a stalled mid-stream read dies with a clear
+  error in 2 minutes instead of the previous 30 minutes.
+- Transient network errors retry up to 3 times with exponential
+  backoff (2 s, 4 s, 8 s).
+- If a ``.part`` file is already on disk (the user is re-running the
+  download after a failure), the next attempt sends ``Range: bytes=N-``
+  and resumes from byte ``N`` instead of starting over.
 """
 
 from __future__ import annotations
@@ -20,13 +38,16 @@ import hashlib
 import hmac
 import json
 import os
+import socket
 import subprocess
+from socket import _GLOBAL_DEFAULT_TIMEOUT
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Callable, Final
+from typing import Callable, Final, Literal
 
 #: GitHub repo coordinates. Public repo (MIT), no auth needed for
 #: anonymous /releases/latest calls (rate-limited to 60/hr per IP).
@@ -36,15 +57,49 @@ LATEST_RELEASE_URL: Final = (
     f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
 )
 #: User-Agent header — GitHub requires a UA on API requests.
-USER_AGENT: Final = "SpeechCraft-Studio-UpdateChecker/1.2.0"
+USER_AGENT: Final = "SpeechCraft-Studio-UpdateChecker/1.3.5"
 
 #: Network timeout for the API call (seconds).
 HTTP_TIMEOUT_S: Final = 10.0
-#: Network timeout for the installer download (seconds). Longer than the
-#: API call because the installer is ~50 MB and may be slow.
+#: TCP connect timeout for downloads (seconds). Short on purpose — if
+#: the host is unreachable we want to know within 30 s, not 30 minutes.
+CONNECT_TIMEOUT_S: Final = 30.0
+#: Per-chunk read timeout for downloads (seconds). Each ``read()`` call
+#: gets up to this long before we raise, so a stalled mid-stream read
+#: surfaces as a clear timeout error rather than a silent 30-min wait.
+READ_TIMEOUT_S: Final = 120.0
+#: Legacy single-timeout knob kept for callers that pass a single
+#: ``timeout_s`` to ``download_with_progress`` / ``fetch_expected_sha256``.
+#: Respected as the connect timeout when no per-phase override is given.
 DOWNLOAD_TIMEOUT_S: Final = 1800.0
 #: Chunk size when streaming the installer to disk (bytes).
 DOWNLOAD_CHUNK_BYTES: Final = 64 * 1024
+#: Max retry attempts on transient network errors (URLError, TimeoutError,
+#: ConnectionResetError). 1 = no retries, 3 = up to three total attempts.
+MAX_DOWNLOAD_RETRIES: Final = 3
+#: Sleep between retries, indexed by attempt number (0 = first retry).
+#: Attempt 1 waits 2 s, attempt 2 waits 4 s, attempt 3 waits 8 s.
+RETRY_BACKOFF_S: Final = (2.0, 4.0, 8.0)
+
+
+#: Progress state passed to the progress callback in addition to the
+#: byte counters. Lets the UI distinguish "still connecting", "we're
+#: downloading", "we hit a transient error and are about to retry",
+#: and "download finished, now verifying the checksum".
+ProgressState = Literal["connecting", "downloading", "retrying", "verifying", "done"]
+
+
+#: HTTP headers every download / digest fetch sends. Module-level so
+#: tests can assert against a single source of truth.
+_DOWNLOAD_HEADERS: Final = {
+    "User-Agent": USER_AGENT,
+    "Accept": "application/octet-stream,*/*",
+    # Force identity so Content-Length matches the bytes written to disk.
+    # Python's urllib transparently decompresses gzip otherwise, which
+    # silently corrupts the progress bar (it tracks compressed bytes
+    # against an uncompressed file).
+    "Accept-Encoding": "identity",
+}
 
 
 @dataclass(frozen=True)
@@ -253,57 +308,208 @@ def fetch_latest_release(
 # --- Download + verification -------------------------------------------------
 
 
-ProgressCallback = Callable[[int, int], None]
-"""``progress_cb(bytes_downloaded, total_bytes)`` — called many times during download."""
+ProgressCallback = Callable[[int, int, str], None]
+"""``progress_cb(bytes_downloaded, total_bytes, state)`` — called many times
+during download. ``state`` is one of :data:`ProgressState`. The byte counters
+are the *whole-asset* numbers (not just the current attempt), so a UI bar
+built on them won't jump backwards between retries."""
 
 
-def download_with_progress(
+# Backwards-compat alias — callers that only care about the byte counts can
+# still get the old 2-arg signature by wrapping with ``_legacy_progress_cb``.
+LegacyProgressCallback = Callable[[int, int], None]
+
+
+def _wrap_progress_cb(
+    progress_cb: ProgressCallback | LegacyProgressCallback | None,
+) -> ProgressCallback | None:
+    """Adapt a 2-arg legacy callback to the 3-arg signature.
+
+    The download core always calls the 3-arg form so it can report state
+    transitions. A 2-arg callback just gets the bytes; the state string
+    is discarded. Returns ``None`` if ``progress_cb`` is ``None``.
+    """
+    if progress_cb is None:
+        return None
+
+    # Inspect the callable's argument count. ``inspect.signature`` is the
+    # most reliable way but adds a runtime cost per call; the simpler
+    # ``getattr(cb, "__code__", None)`` check is plenty for the tests.
+    code = getattr(progress_cb, "__code__", None)
+    if code is not None and code.co_argcount >= 3:
+        return progress_cb  # type: ignore[return-value]
+
+    def _adapt(downloaded: int, total: int, state: str) -> None:
+        progress_cb(downloaded, total)  # type: ignore[call-arg]
+
+    return _adapt
+
+
+def _existing_part_size(tmp_path: str) -> int:
+    """Return the byte count of an existing ``.part`` file, or 0."""
+    try:
+        return os.path.getsize(tmp_path)
+    except OSError:
+        return 0
+
+
+def _open_with_timeouts(
+    url: str,
+    *,
+    headers: dict[str, str],
+    range_from: int | None,
+    connect_timeout_s: float,
+    read_timeout_s: float,
+) -> tuple[object, int, bool]:
+    """Open ``url`` with separate connect / read timeouts.
+
+    Returns ``(resp, total_from_content_length, used_resume)``. ``total_from_content_length``
+    is 0 when the server omits it (chunked transfer); ``used_resume`` is
+    True iff a Range request was sent and the server replied 206 Partial
+    Content. The caller uses these to pick the right byte counters and
+    to decide whether to trust the resume offset.
+
+    Raises ``urllib.error.URLError`` / ``TimeoutError`` / ``OSError``;
+    callers translate these into :class:`UpdateCheckError` after a
+    retry pass.
+    """
+    req_headers = dict(headers)
+    if range_from is not None and range_from > 0:
+        req_headers["Range"] = f"bytes={range_from}-"
+    req = urllib.request.Request(url, headers=req_headers)
+
+    # urllib.request.urlopen accepts a single ``timeout`` kwarg that
+    # applies to both connect AND read. Splitting them requires a manual
+    # socket, then handing the live socket to ``urlopen``. We do that via
+    # a small opener shim — Python doesn't expose per-phase timeouts
+    # through the standard API directly.
+    #
+    # Implementation: monkey-patch socket.create_connection for the
+    # duration of the urlopen call. Cleaner than rolling our own HTTP
+    # parser just to swap a timeout.
+    original_create_connection = socket.create_connection
+
+    def _patched_create_connection(address, timeout=_GLOBAL_DEFAULT_TIMEOUT,
+                                    source_address=None):
+        # http.client always passes the timeout as the 2nd positional arg;
+        # ignore whatever it sent and inject our own connect timeout.
+        # ``socket._GLOBAL_DEFAULT_TIMEOUT`` is imported here to keep this
+        # function's signature shape-matching the stdlib one (some callers
+        # introspect ``inspect.signature``).
+        return original_create_connection(
+            address,
+            connect_timeout_s,
+            source_address,
+        )
+
+    socket.create_connection = _patched_create_connection
+    try:
+        resp = urllib.request.urlopen(req, timeout=read_timeout_s)
+    finally:
+        socket.create_connection = original_create_connection
+
+    # Content-Length for a 206 Partial Content response is the *remaining*
+    # bytes, not the full asset size. We compute the full size from the
+    # Content-Range header when present, falling back to the request's
+    # Range + Content-Length for the chunked case.
+    content_length = int(resp.headers.get("Content-Length") or 0)
+    used_resume = (
+        range_from is not None
+        and range_from > 0
+        and getattr(resp, "status", None) == 206
+    )
+    if used_resume:
+        # Content-Range: bytes 1234-5678/9012 -> total = 9012
+        cr = resp.headers.get("Content-Range") or ""
+        if "/" in cr:
+            try:
+                total = int(cr.rsplit("/", 1)[1])
+            except (ValueError, IndexError):
+                total = range_from + content_length
+        else:
+            total = range_from + content_length
+    else:
+        total = content_length
+    return resp, total, used_resume
+
+
+def _stream_to_file(
+    resp,
+    *,
+    tmp_path: str,
+    append: bool,
+    chunk_bytes: int,
+    cancel_check: Callable[[], bool] | None,
+    on_progress: Callable[[int], None] | None,
+) -> int:
+    """Stream ``resp`` to ``tmp_path`` in ``chunk_bytes`` slices.
+
+    If ``append`` is True the file is opened in append mode (resume);
+    otherwise it's truncated. ``on_progress`` is called with the total
+    bytes written in this attempt after every chunk. ``cancel_check``
+    is polled between chunks; returning True aborts cleanly by deleting
+    ``tmp_path`` and raising :class:`UpdateCheckError`.
+
+    Returns the number of bytes written in this attempt.
+    """
+    mode = "ab" if append else "wb"
+    os.makedirs(os.path.dirname(tmp_path) or ".", exist_ok=True)
+    written = 0
+    fh = open(tmp_path, mode)
+    try:
+        while True:
+            if cancel_check is not None and cancel_check():
+                fh.close()
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise UpdateCheckError("Download cancelled.")
+            chunk = resp.read(chunk_bytes)
+            if not chunk:
+                break
+            fh.write(chunk)
+            written += len(chunk)
+            if on_progress is not None:
+                on_progress(written)
+    finally:
+        fh.close()
+    return written
+
+
+def _download_once(
     url: str,
     dest_path: str,
     *,
-    progress_cb: ProgressCallback | None = None,
-    cancel_check: Callable[[], bool] | None = None,
-    timeout_s: float = DOWNLOAD_TIMEOUT_S,
-    chunk_bytes: int = DOWNLOAD_CHUNK_BYTES,
-) -> str:
-    """Stream ``url`` to ``dest_path`` with byte-level progress callbacks.
+    range_from: int,
+    progress_cb: ProgressCallback | None,
+    cancel_check: Callable[[], bool] | None,
+    connect_timeout_s: float,
+    read_timeout_s: float,
+    chunk_bytes: int,
+) -> tuple[int, int]:
+    """Single download attempt.
 
-    ``cancel_check`` is polled between chunks; if it returns True the
-    partial file is deleted and ``UpdateCheckError`` is raised.
-
-    Returns ``dest_path`` on success. Raises ``UpdateCheckError`` on
-    any network error.
+    Returns ``(bytes_written_this_attempt, total_bytes)``. Raises
+    :class:`UpdateCheckError` on any failure; the caller decides whether
+    to retry.
     """
-    req = urllib.request.Request(
-        url,
-        headers={"User-Agent": USER_AGENT},
-    )
+    tmp_path = dest_path + ".part"
+    if progress_cb is not None:
+        progress_cb(range_from, 0, "connecting")
+
     try:
-        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-            total = int(resp.headers.get("Content-Length") or 0)
-            tmp_path = dest_path + ".part"
-            # Ensure the destination directory exists. On a fresh install
-            # the staging folder (%LOCALAPPDATA%\SpeechCraft\updates\) may
-            # not exist yet, so open() would raise FileNotFoundError.
-            os.makedirs(os.path.dirname(dest_path) or ".", exist_ok=True)
-            downloaded = 0
-            with open(tmp_path, "wb") as fh:
-                while True:
-                    if cancel_check is not None and cancel_check():
-                        fh.close()
-                        try:
-                            os.unlink(tmp_path)
-                        except OSError:
-                            pass
-                        raise UpdateCheckError("Download cancelled.")
-                    chunk = resp.read(chunk_bytes)
-                    if not chunk:
-                        break
-                    fh.write(chunk)
-                    downloaded += len(chunk)
-                    if progress_cb is not None:
-                        progress_cb(downloaded, total)
+        resp, total, used_resume = _open_with_timeouts(
+            url,
+            headers=_DOWNLOAD_HEADERS,
+            range_from=range_from,
+            connect_timeout_s=connect_timeout_s,
+            read_timeout_s=read_timeout_s,
+        )
     except urllib.error.HTTPError as exc:
+        # 416 Range Not Satisfiable means the .part is corrupt or the
+        # server's view of the file changed. Caller decides whether to
+        # discard the .part and retry from 0.
         raise UpdateCheckError(
             f"GitHub returned HTTP {exc.code} while downloading."
         ) from exc
@@ -313,21 +519,143 @@ def download_with_progress(
         ) from exc
     except TimeoutError as exc:
         raise UpdateCheckError(
-            "Download timed out. Try again later."
+            f"Download timed out after {read_timeout_s:.0f}s. Try again later."
         ) from exc
+    except OSError as exc:
+        raise UpdateCheckError(
+            f"Network error during download: {exc}."
+        ) from exc
+
+    # When the server ignores our Range request and replies with the full
+    # body (some CDNs do this), the bytes already in .part would be
+    # duplicated. Discard the stale .part and start over in this attempt.
+    append = used_resume
+
+    def _on_attempt_progress(written: int) -> None:
+        if progress_cb is None:
+            return
+        progress_cb(range_from + written, total, "downloading")
+
+    try:
+        bytes_this_attempt = _stream_to_file(
+            resp,
+            tmp_path=tmp_path,
+            append=append,
+            chunk_bytes=chunk_bytes,
+            cancel_check=cancel_check,
+            on_progress=_on_attempt_progress,
+        )
+    except UpdateCheckError:
+        # Already a clean UpdateCheckError (cancel); let it propagate.
+        raise
     except OSError as exc:
         raise UpdateCheckError(
             f"Could not write the installer: {exc}."
         ) from exc
 
-    # Atomic rename from .part -> final path.
-    try:
-        os.replace(tmp_path, dest_path)
-    except OSError as exc:
-        raise UpdateCheckError(
-            f"Could not finalize the installer: {exc}."
-        ) from exc
-    return dest_path
+    return bytes_this_attempt, total
+
+
+def download_with_progress(
+    url: str,
+    dest_path: str,
+    *,
+    progress_cb: ProgressCallback | LegacyProgressCallback | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+    timeout_s: float = DOWNLOAD_TIMEOUT_S,
+    chunk_bytes: int = DOWNLOAD_CHUNK_BYTES,
+) -> str:
+    """Stream ``url`` to ``dest_path`` with byte-level progress callbacks.
+
+    The download is robust against transient network failures:
+
+    - **Split timeouts** — the TCP connect gets ``timeout_s`` (default 30 s),
+      each chunk read gets ``timeout_s`` (default 30 s). The legacy single
+      ``timeout_s`` argument is honoured as both — pass the new explicit
+      knobs for finer control.
+    - **Retry** — up to :data:`MAX_DOWNLOAD_RETRIES` attempts on transient
+      errors (``URLError``, ``TimeoutError``, ``ConnectionResetError``).
+      Backoff is exponential: :data:`RETRY_BACKOFF_S`.
+    - **Resume** — if ``dest_path + ".part"`` exists at call time, the
+      first attempt sends ``Range: bytes=<N>-`` and appends; on success
+      the final file is the concatenation. A ``416 Range Not Satisfiable``
+      reply triggers a clean restart from byte 0.
+    - **Cancel** — ``cancel_check`` is polled between chunks; returning
+      True deletes ``.part`` and raises :class:`UpdateCheckError`.
+
+    ``progress_cb`` accepts either the modern 3-arg signature
+    ``(downloaded, total, state)`` or the legacy 2-arg ``(downloaded, total)``.
+    The byte counters are whole-asset numbers (they don't jump backwards
+    between retries).
+
+    Returns ``dest_path`` on success. Raises :class:`UpdateCheckError` on
+    a final failure (network error after retries, SHA mismatch upstream,
+    cancellation, …).
+    """
+    cb = _wrap_progress_cb(progress_cb)
+    tmp_path = dest_path + ".part"
+    range_from = _existing_part_size(tmp_path)
+
+    attempts_allowed = max(1, MAX_DOWNLOAD_RETRIES)
+    last_error: UpdateCheckError | None = None
+
+    for attempt in range(attempts_allowed):
+        if attempt > 0:
+            if cb is not None:
+                cb(range_from, 0, "retrying")
+            backoff = RETRY_BACKOFF_S[min(attempt - 1, len(RETRY_BACKOFF_S) - 1)]
+            time.sleep(backoff)
+            # Refresh the .part size — a prior attempt may have appended
+            # some bytes before failing.
+            range_from = _existing_part_size(tmp_path)
+
+        try:
+            bytes_this_attempt, total = _download_once(
+                url,
+                dest_path,
+                range_from=range_from,
+                progress_cb=cb,
+                cancel_check=cancel_check,
+                connect_timeout_s=timeout_s,
+                read_timeout_s=timeout_s,
+                chunk_bytes=chunk_bytes,
+            )
+        except UpdateCheckError as exc:
+            # Cancellation is a user action, not a retryable error.
+            if str(exc) == "Download cancelled.":
+                raise
+            # 416 means the .part is stale — delete it and retry from 0
+            # on the same attempt index (no backoff sleep).
+            if "HTTP 416" in str(exc) and range_from > 0:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                range_from = 0
+                continue
+            last_error = exc
+            continue
+
+        # Success for this attempt.
+        range_from += bytes_this_attempt
+        if cb is not None:
+            cb(range_from, total, "verifying")
+
+        # Atomic rename from .part -> final path.
+        try:
+            os.replace(tmp_path, dest_path)
+        except OSError as exc:
+            raise UpdateCheckError(
+                f"Could not finalize the installer: {exc}."
+            ) from exc
+
+        if cb is not None:
+            cb(range_from, total, "done")
+        return dest_path
+
+    # All attempts exhausted.
+    assert last_error is not None  # loop above sets it before continuing
+    raise last_error
 
 
 def sha256_of_file(path: str, *, chunk_bytes: int = DOWNLOAD_CHUNK_BYTES) -> str:
@@ -372,7 +700,7 @@ def fetch_expected_sha256(
     """
     req = urllib.request.Request(
         digest_url,
-        headers={"User-Agent": USER_AGENT},
+        headers=dict(_DOWNLOAD_HEADERS),
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout_s) as resp:

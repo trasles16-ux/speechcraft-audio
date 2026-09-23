@@ -3279,9 +3279,9 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
         dest_path = installer_staging_path(info.version)
         progress_dlg = None
 
-        def _on_main_thread(downloaded, total):
+        def _on_main_thread(state, downloaded, total):
             if progress_dlg is not None:
-                progress_dlg.update(downloaded)
+                progress_dlg.update(state, downloaded, total)
 
         def _worker():
             # Wrap the entire body so non-UpdateCheckError exceptions don't
@@ -3303,7 +3303,9 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
                 try:
                     download_with_progress(
                         installer.url, dest_path,
-                        progress_cb=lambda d, t: wx.CallAfter(_on_main_thread, d, t),
+                        progress_cb=lambda d, t, s: wx.CallAfter(
+                            _on_main_thread, s, d, t
+                        ),
                         cancel_check=lambda: (progress_dlg.is_cancelled() if progress_dlg else False),
                     )
                 except UpdateCheckError as exc:
