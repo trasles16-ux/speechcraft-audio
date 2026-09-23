@@ -86,6 +86,7 @@ class Splash(wx.Frame):
             panel,
             label="SpeechCraft Studio",
         )
+        title.SetName("SpeechCraft Studio, heading")
         title.SetFont(
             wx.Font(
                 22,
@@ -99,6 +100,7 @@ class Splash(wx.Frame):
             panel,
             label="Loading, please wait…",
         )
+        subtitle.SetName("Loading, please wait")
         subtitle.SetFont(
             wx.Font(
                 10,

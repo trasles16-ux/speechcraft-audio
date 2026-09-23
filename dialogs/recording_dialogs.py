@@ -97,6 +97,9 @@ class RecordingDialog(wx.Dialog):
         super().__init__(parent, title="Recording Setup", size=(400, 300))
         # Accessible name: NVDA otherwise reads 'dialog'.
         name_dialog(self, "Recording Setup")
+        # v1.3.6: keyboard accessibility — Escape dismisses the dialog.
+        from dialogs._a11y import bind_escape_to_cancel
+        bind_escape_to_cancel(self)
 
         self.input_device_id = input_device_id
         self.monitoring = False
@@ -189,7 +192,10 @@ class RecordingDialog(wx.Dialog):
                 
                 self.monitoring = True
                 self.monitor_btn.SetLabel("Stop Monitor")
-                
+                # v1.3.6: re-call SetName so NVDA re-announces the new state
+                # when the user lands back on this button.
+                self.monitor_btn.SetName("Stop live level monitor. Currently running.")
+
             except Exception as e:
                 wx.MessageBox(f"Failed to start monitoring: {e}", "Error", wx.ICON_ERROR)
         else:
@@ -197,11 +203,13 @@ class RecordingDialog(wx.Dialog):
                 self.monitor_stream.stop()
                 self.monitor_stream.close()
                 self.monitor_stream = None
-                
+
             self.monitoring = False
             self.monitor_btn.SetLabel("Start Level Monitor")
+            self.monitor_btn.SetName("Start live level monitor. Currently stopped.")
             self.level_gauge.SetValue(0)
             self.level_text.SetLabel("Level: -∞ dB")
+            self.level_text.SetName("Input level readout in decibels, currently minus infinity")
             
     def update_level(self, level_percent, db_level):
         self.level_gauge.SetValue(int(level_percent))
@@ -215,6 +223,11 @@ class RecordingDialog(wx.Dialog):
             self.level_gauge.SetForegroundColour(wx.Colour(0, 255, 0))
             
         self.level_text.SetLabel(f"Level: {db_level:.1f} dB")
+        # v1.3.6: re-call SetName so NVDA re-announces the live level when
+        # the user navigates back to this label.
+        self.level_text.SetName(
+            f"Input level readout in decibels, currently {db_level:.1f}"
+        )
         
     def Destroy(self):
         self._destroyed = True
@@ -230,6 +243,9 @@ class StudioRecordingDialog(wx.Dialog):
         super().__init__(parent, title="Studio Recording - Director Control", size=(700, 600))
         # Accessible name: NVDA otherwise reads 'dialog'.
         name_dialog(self, "Studio Recording Director Control")
+        # v1.3.6: keyboard accessibility — Escape dismisses the dialog.
+        from dialogs._a11y import bind_escape_to_cancel
+        bind_escape_to_cancel(self)
 
         self._destroyed = False
 
@@ -268,56 +284,75 @@ class StudioRecordingDialog(wx.Dialog):
     def create_voice_actor_monitor(self):
         """Create a simplified monitor window for voice actor in studio"""
         self.voice_actor_monitor = wx.Frame(None, title="Voice Actor Monitor", size=(500, 400))
-        
+        # v1.3.6: accessible names on every interactive widget so NVDA
+        # announces a meaningful description instead of "staticText" /
+        # "frame" / "groupBox" / "gauge".
+        self.voice_actor_monitor.SetName(
+            "Voice Actor Monitor window. Read-only display for the voice "
+            "actor in the studio, showing the current line to record, "
+            "session progress, and director status."
+        )
+
         panel = wx.Panel(self.voice_actor_monitor)
+        panel.SetName("Voice Actor Monitor panel")
         vbox = wx.BoxSizer(wx.VERTICAL)
-        
+
         # Large, clear title
         title = wx.StaticText(panel, label="Voice Actor Monitor")
+        title.SetName("Voice Actor Monitor, heading")
         title_font = title.GetFont()
         title_font.SetPointSize(18)
         title_font.SetWeight(wx.FONTWEIGHT_BOLD)
         title.SetFont(title_font)
         vbox.Add(title, 0, wx.ALL | wx.ALIGN_CENTER, 15)
-        
+
         # Current line display (large text for studio visibility)
         line_box = wx.StaticBox(panel, label="Current Line to Record")
+        name_group(line_box, "Current line to record")
         line_sizer = wx.StaticBoxSizer(line_box, wx.VERTICAL)
-        
+
         self.actor_current_line = wx.TextCtrl(panel, style=wx.TE_MULTILINE | wx.TE_READONLY, size=(-1, 150))
+        name_widget(
+            self.actor_current_line,
+            "Current line to record, read-only. Updated by the director.",
+        )
         line_font = self.actor_current_line.GetFont()
         line_font.SetPointSize(14)
         line_font.SetWeight(wx.FONTWEIGHT_BOLD)
         self.actor_current_line.SetFont(line_font)
         line_sizer.Add(self.actor_current_line, 1, wx.EXPAND | wx.ALL, 5)
-        
+
         vbox.Add(line_sizer, 1, wx.EXPAND | wx.ALL, 10)
-        
+
         # Progress display (simple and clear)
         progress_box = wx.StaticBox(panel, label="Session Progress")
+        name_group(progress_box, "Session progress")
         progress_sizer = wx.StaticBoxSizer(progress_box, wx.VERTICAL)
-        
+
         self.actor_progress_gauge = wx.Gauge(panel, range=100, size=(-1, 40))
+        name_widget(self.actor_progress_gauge, "Session progress gauge")
         progress_sizer.Add(self.actor_progress_gauge, 0, wx.EXPAND | wx.ALL, 5)
-        
+
         self.actor_progress_text = wx.StaticText(panel, label="Ready to start...")
+        name_widget(self.actor_progress_text, "Session progress, ready to start")
         progress_text_font = self.actor_progress_text.GetFont()
         progress_text_font.SetPointSize(12)
         self.actor_progress_text.SetFont(progress_text_font)
         progress_sizer.Add(self.actor_progress_text, 0, wx.ALL | wx.ALIGN_CENTER, 5)
-        
+
         vbox.Add(progress_sizer, 0, wx.EXPAND | wx.ALL, 10)
-        
+
         # Status display
         self.actor_status = wx.StaticText(panel, label="Waiting for director...")
+        name_widget(self.actor_status, "Director status, waiting for director")
         status_font = self.actor_status.GetFont()
         status_font.SetPointSize(14)
         status_font.SetWeight(wx.FONTWEIGHT_BOLD)
         self.actor_status.SetFont(status_font)
         vbox.Add(self.actor_status, 0, wx.ALL | wx.ALIGN_CENTER, 15)
-        
+
         panel.SetSizer(vbox)
-        
+
         # Position on second display if available
         displays = wx.Display.GetCount()
         if displays > 1:
@@ -327,7 +362,7 @@ class StudioRecordingDialog(wx.Dialog):
         else:
             main_pos = self.GetPosition()
             self.voice_actor_monitor.SetPosition((main_pos.x + 50, main_pos.y + 50))
-            
+
         self.voice_actor_monitor.Show()
         
     def start_network_server(self):
@@ -503,17 +538,20 @@ class StudioRecordingDialog(wx.Dialog):
                 self.redo_word.Enable(False)
                 
                 self.progress_text.SetLabel("Recording in progress...")
-                
+                # v1.3.6: re-call SetName so NVDA re-announces progress state
+                self.progress_text.SetName("Recording progress text, recording in progress")
+
                 # Send recording start to braille
                 try:
                     import braille_support
                     braille_support.send_to_braille("Recording started", "high")
                 except ImportError:
                     pass
-                
+
                 # Update voice actor monitor
                 if self.voice_actor_monitor:
                     self.actor_status.SetLabel("Recording in progress...")
+                    self.actor_status.SetName("Director status, recording in progress")
                     
                 # Update network clients
                 if self.network_server:
@@ -542,17 +580,20 @@ class StudioRecordingDialog(wx.Dialog):
             self.redo_word.Enable(True)
             
             self.progress_text.SetLabel("Recording completed!")
-            
+            # v1.3.6: re-call SetName so NVDA re-announces completion state
+            self.progress_text.SetName("Recording progress text, recording completed")
+
             # Send completion to braille
             try:
                 import braille_support
                 braille_support.send_to_braille("Recording finished", "high")
             except ImportError:
                 pass
-            
+
             # Update voice actor monitor
             if self.voice_actor_monitor:
                 self.actor_status.SetLabel("Session completed!")
+                self.actor_status.SetName("Director status, session completed")
                 
             # Update network clients
             if self.network_server:
@@ -588,6 +629,11 @@ class StudioRecordingDialog(wx.Dialog):
             f"({progress['completed_lines']} completed)"
         )
         self.progress_text.SetLabel(progress_label)
+        # v1.3.6: re-call SetName so NVDA re-announces on every progress tick
+        self.progress_text.SetName(
+            f"Recording progress text, line {progress['current_line']} "
+            f"of {progress['total_lines']}, {progress['completed_lines']} completed"
+        )
 
         # Update transcription
         if transcription == "REDO":
@@ -620,9 +666,16 @@ class StudioRecordingDialog(wx.Dialog):
         if self.voice_actor_monitor and self.voice_actor_monitor.IsShown():
             self.actor_progress_gauge.SetValue(int(progress['progress_percent']))
             self.actor_progress_text.SetLabel(progress_label)
-            
+            # v1.3.6: re-call SetName on every progress tick so the actor's
+            # screen reader (if any) hears "Line 3 of 12, 2 completed".
+            self.actor_progress_text.SetName(
+                f"Session progress, line {progress['current_line']} "
+                f"of {progress['total_lines']}, {progress['completed_lines']} completed"
+            )
+
             if transcription == "REDO":
                 self.actor_status.SetLabel("Redo in progress...")
+                self.actor_status.SetName("Director status, redo in progress")
                 # Send redo status to braille
                 try:
                     import braille_support
@@ -631,6 +684,7 @@ class StudioRecordingDialog(wx.Dialog):
                     pass
             else:
                 self.actor_status.SetLabel("Recording...")
+                self.actor_status.SetName("Director status, recording")
                 
             # Update actor current line and send to braille
             if current_line:

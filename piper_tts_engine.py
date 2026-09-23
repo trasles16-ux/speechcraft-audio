@@ -1,12 +1,19 @@
 """Piper TTS Engine for SpeechCraft Studio.
 
-Wraps the Piper TTS executable. Model/voice files are managed by
-:mod:`feature_manager` — this engine reads them from the dest dir the
-feature manager installed, not from a hardcoded URL list.
+Wraps the Piper TTS executable. Model/voice files AND the Piper
+executable itself are managed by :mod:`feature_manager` — this engine
+reads them from the dest dir the feature manager installed, not from a
+hardcoded URL list.
 
 Default voices are en_GB (Cori / Alan) from rhasspy/piper-voices.
 South African voices do not exist publicly yet; en_GB is the working
 default until the SA voice project lands.
+
+Lazy install (v1.3.5): if Piper or a voice isn't on disk when the
+engine is constructed or ``synthesize`` is called, the engine asks
+:func:`dialogs.lazy_install.prompt_and_install` to prompt the user
+and download with progress UI. Pass ``parent=None`` (the default) to
+disable the prompt — useful for headless / test contexts.
 """
 
 from __future__ import annotations
@@ -42,25 +49,65 @@ class PiperTTSEngine:
 
     DEFAULT_VOICE = "English GB (Female — Cori)"
 
-    def __init__(self, models_dir: Optional[str] = None):
+    def __init__(
+        self,
+        models_dir: Optional[str] = None,
+        *,
+        parent=None,
+        allow_prompt: bool = True,
+    ):
         """Initialise the engine.
 
         Args:
             models_dir: directory holding feature_manager-installed
                 assets. Defaults to the feature_manager dest dir under
                 PREFS_DIR.
+            parent: wx.Window or None. Used as the parent for the
+                lazy-install dialog. Defaults to None — call sites in
+                the UI pass their main frame.
+            allow_prompt: when False, the engine raises RuntimeError
+                if Piper or a voice is missing instead of prompting.
+                Tests use this; production callers leave it True.
         """
         if models_dir is None:
             models_dir = str(_default_models_dir())
         self.models_dir = Path(models_dir)
+        # Stash for ``synthesize`` so a caller can construct the engine
+        # once and synthesise many times without re-passing the parent.
+        self._parent = parent
+        self._allow_prompt = allow_prompt
 
+        # Find or download piper.exe. Core installs don't bundle it;
+        # the lazy-install flow offers to download on first use.
         self.piper_path = self._find_piper()
         if not self.piper_path:
-            raise RuntimeError(
-                "Piper executable not found. Download from:\n"
-                "https://github.com/rhasspy/piper/releases\n"
-                "Extract piper.exe to your PATH or current directory"
+            if not allow_prompt or parent is None:
+                raise RuntimeError(
+                    "Piper executable not found. Download from:\n"
+                    "https://github.com/rhasspy/piper/releases\n"
+                    "Extract piper.exe to your PATH or current directory"
+                )
+            # The Core build path: prompt and install.
+            from dialogs.lazy_install import prompt_and_install
+            installed = prompt_and_install(
+                "piper_tts", "executable", parent=parent
             )
+            if not installed:
+                raise RuntimeError(
+                    "Piper executable was not installed. Piper TTS "
+                    "needs piper.exe to run; install it via Help → "
+                    "Personalise SpeechCraft or download manually from "
+                    "github.com/rhasspy/piper/releases."
+                )
+            self.piper_path = self._find_piper()
+            if not self.piper_path:
+                # The asset was downloaded but the executable lookup
+                # still can't find it — bad state, surface a clear error.
+                raise RuntimeError(
+                    "Piper executable was downloaded but could not be "
+                    "located on disk. Try Help → Personalise SpeechCraft "
+                    "and check the Piper status."
+                )
 
     # ------------------------------------------------------------------
     # Voice / asset plumbing
@@ -75,11 +122,24 @@ class PiperTTSEngine:
             result[name] = {"feature": feature, "asset": asset, "ready": ready}
         return result
 
-    def _resolve_voice_files(self, voice_name: str) -> tuple[Path, Path]:
+    def _resolve_voice_files(
+        self,
+        voice_name: str,
+        *,
+        parent=None,
+        allow_prompt: bool = True,
+    ) -> tuple[Path, Path]:
         """Locate model + config files for a voice, downloading if needed.
 
         Returns (model_path, config_path). Raises if the asset was not
-        downloadable or the download failed.
+        downloadable, the user declined the prompt, or the download
+        failed.
+
+        If ``allow_prompt`` is True and ``parent`` is not None, missing
+        voices trigger the standard lazy-install flow: a Yes/No prompt
+        and, on Yes, a progress dialog while :func:`feature_manager.ensure_ready`
+        runs. Pass ``allow_prompt=False`` to fall back to the legacy
+        silent-download behaviour (or just raise on missing assets).
         """
         if voice_name not in self.VOICES:
             voice_name = self.DEFAULT_VOICE
@@ -93,16 +153,28 @@ class PiperTTSEngine:
         if model_path.exists() and config_path.exists():
             return model_path, config_path
 
-        # Otherwise download via feature_manager
-        if not feature_manager.is_downloadable(feature, asset):
-            raise RuntimeError(
-                f"Voice {voice_name!r} has no downloadable assets yet."
+        # Not on disk: silent download, prompt, or raise — depending on
+        # how the engine was constructed and called.
+        if allow_prompt and parent is not None:
+            from dialogs.lazy_install import prompt_and_install
+            ok = prompt_and_install(feature, asset, parent=parent)
+            if not ok:
+                raise RuntimeError(
+                    f"Voice {voice_name!r} needs its model files, but "
+                    "the install was cancelled or failed."
+                )
+        else:
+            # Legacy silent path (no UI). Tests and headless callers use
+            # this; production UI callers always pass a parent.
+            if not feature_manager.is_downloadable(feature, asset):
+                raise RuntimeError(
+                    f"Voice {voice_name!r} has no downloadable assets yet."
+                )
+            feature_manager.ensure_ready(
+                feature,
+                asset,
+                dest_dir=self.models_dir,
             )
-        feature_manager.ensure_ready(
-            feature,
-            asset,
-            dest_dir=self.models_dir,
-        )
         if not model_path.exists() or not config_path.exists():
             raise RuntimeError(
                 f"Voice {voice_name!r} files missing after download: "
@@ -111,12 +183,26 @@ class PiperTTSEngine:
         return model_path, config_path
 
     # ------------------------------------------------------------------
-    # Piper executable discovery (unchanged behaviour)
+    # Piper executable discovery
     # ------------------------------------------------------------------
 
     def _find_piper(self) -> Optional[str]:
+        # 1. Bundled / installed via feature_manager.
+        from feature_manager import is_ready, asset_key
+        if is_ready("piper_tts", "executable"):
+            exe = (
+                feature_manager.DEFAULT_STATE_FILE.parent
+                / "feature_assets"
+                / "piper_tts"
+                / "executable"
+                / "piper.exe"
+            )
+            if exe.exists():
+                return str(exe)
+        # 2. CWD (legacy behaviour — piper.exe next to SpeechCraft).
         if os.path.exists("piper.exe"):
             return os.path.abspath("piper.exe")
+        # 3. PATH lookup.
         try:
             result = subprocess.run(
                 ["piper", "--version"], capture_output=True, text=True
@@ -133,10 +219,19 @@ class PiperTTSEngine:
 
     def synthesize(self, text: str,
                    voice_name: str = DEFAULT_VOICE,
-                   speed: float = 1.0) -> str:
+                   speed: float = 1.0,
+                   *,
+                   parent=None,
+                   allow_prompt: bool = True) -> str:
         """Synthesize text to a WAV file using Piper TTS.
 
         Returns the path to the generated WAV.
+
+        ``parent`` and ``allow_prompt`` are forwarded to
+        :meth:`_resolve_voice_files` — when the voice isn't on disk
+        and a wx parent is available, the user is prompted to download
+        with progress UI. Pass ``allow_prompt=False`` to keep the
+        legacy silent behaviour (test / headless callers).
         """
         if not text.strip():
             raise ValueError("Text cannot be empty")
@@ -144,7 +239,18 @@ class PiperTTSEngine:
         if voice_name not in self.VOICES:
             voice_name = self.DEFAULT_VOICE
 
-        model_path, config_path = self._resolve_voice_files(voice_name)
+        # Fall back to the engine's stored parent / prompt settings when
+        # the caller didn't override.
+        if parent is None:
+            parent = getattr(self, "_parent", None)
+        if parent is not None and allow_prompt:
+            # Already constructed with a parent — re-use it.
+            pass
+        model_path, config_path = self._resolve_voice_files(
+            voice_name,
+            parent=parent,
+            allow_prompt=allow_prompt,
+        )
 
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
         output_path = temp_file.name

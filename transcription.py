@@ -413,12 +413,24 @@ class TranscriptionEngine:
 _WHISPER_ASSET_BY_SIZE = {"tiny": "tiny.en", "base": "base.en"}
 
 
-def _resolve_local_whisper_model(model_size: str) -> Optional[str]:
+def _resolve_local_whisper_model(
+    model_size: str,
+    *,
+    parent=None,
+    allow_prompt: bool = True,
+) -> Optional[str]:
     """Return the local model dir if feature_manager installed it.
 
     Returns a path string that WhisperModel can load directly, or None
     (fall back to faster-whisper's built-in lookup). Never raises — a
     missing/failed local install must not block transcription.
+
+    v1.3.5: if a wx ``parent`` is provided and the asset isn't on disk,
+    prompt the user to download it (one Yes/No dialog + a progress bar).
+    Pass ``allow_prompt=False`` for the legacy silent behaviour — the
+    function returns None and faster-whisper falls back to its built-in
+    Hugging Face lookup (which works on Full installs where the model
+    is bundled, and on dev machines with HF cache pre-warmed).
     """
     try:
         import feature_manager
@@ -428,9 +440,29 @@ def _resolve_local_whisper_model(model_size: str) -> Optional[str]:
     asset = _WHISPER_ASSET_BY_SIZE.get(model_size)
     if asset is None:
         return None
+
+    # Already on disk?
     try:
         if feature_manager.is_ready("local_transcription", asset):
-            # model.bin lives at dest_dir/local_transcription/<asset>/model.bin
+            state = feature_manager.load_feature_state()
+            entry = state.get(f"local_transcription/{asset}", {})
+            model_bin = entry.get("paths", {}).get("model.bin")
+            if model_bin and os.path.exists(model_bin):
+                return os.path.dirname(model_bin)
+    except Exception:
+        return None
+
+    # Not ready — try to lazy-install if we have a UI parent.
+    if not allow_prompt or parent is None:
+        return None
+
+    try:
+        from dialogs.lazy_install import prompt_and_install
+        ok = prompt_and_install("local_transcription", asset, parent=parent)
+        if not ok:
+            return None
+        # Re-check after a successful install.
+        if feature_manager.is_ready("local_transcription", asset):
             state = feature_manager.load_feature_state()
             entry = state.get(f"local_transcription/{asset}", {})
             model_bin = entry.get("paths", {}).get("model.bin")
@@ -463,27 +495,36 @@ class FasterWhisperTranscriber(TranscriptionEngine):
         model_size: str = "small",
         device: str = "cpu",
         language: str = "en",
-        punctuate: bool = True
+        punctuate: bool = True,
+        *,
+        parent=None,
     ):
         if not FASTER_WHISPER_AVAILABLE:
             raise ImportError(
                 "faster-whisper not installed. "
                 "Install with: pip install faster-whisper"
             )
-        
+
         self.model_size = model_size
         self.device = device
         self.language = language
         self.punctuate = punctuate
+        # Stashed so _get_model can offer a "download the model" prompt
+        # to the user if the local asset isn't on disk. Defaults to None
+        # for headless / test callers.
+        self._parent = parent
         self._model = None
         self._init_lock = threading.Lock()
-    
+
     def _get_model(self):
         if self._model is None:
             with self._init_lock:
                 if self._model is None:
                     compute = "float16" if self.device == "cuda" else "int8"
-                    model_path = _resolve_local_whisper_model(self.model_size)
+                    model_path = _resolve_local_whisper_model(
+                        self.model_size,
+                        parent=self._parent,
+                    )
                     self._model = WhisperModel(
                         model_path if model_path else self.model_size,
                         device=self.device,

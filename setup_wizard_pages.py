@@ -157,12 +157,18 @@ class EditingFeaturesPage(_WizardPage):
     basic_editing is the foundation (always on) and is described in
     the page intro, NOT as a checkbox. The user toggles the 5
     optional capabilities below it.
+
+    v1.3.5: each feature has a status row showing whether its asset
+    (model files, etc.) is ready, needs a download, or isn't
+    available in this build. The row uses a small coloured StaticText
+    so NVDA reads the label and sighted users see the colour.
     """
 
     def __init__(self, parent: wx.Window, *, flags: FeatureFlags) -> None:
         self._flags = flags
         self.checkboxes: dict[str, wx.CheckBox] = {}
         self._descriptions: dict[str, wx.StaticText] = {}
+        self._status_labels: dict[str, wx.StaticText] = {}
         self._has_state = True  # see _save_current_page in setup_wizard.py
         super().__init__(parent, name="Editing features")
 
@@ -192,7 +198,7 @@ class EditingFeaturesPage(_WizardPage):
         self._sizer.Add(foundation, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 16)
 
         # The 5 optional features as a vertical stack of checkboxes,
-        # each with its own description as a sub-label.
+        # each with its own description as a sub-label and a status row.
         for name in EDITING_PAGE_FEATURES:
             current = getattr(self._flags, name)
             cb = wx.CheckBox(self, label=_humanize(name))
@@ -206,7 +212,14 @@ class EditingFeaturesPage(_WizardPage):
             self._descriptions[name] = desc
             desc.SetForegroundColour(wx.Colour(80, 80, 80))
             desc.Wrap(520)
-            self._sizer.Add(desc, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 24)
+            self._sizer.Add(desc, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+
+            # v1.3.5 status row
+            status = wx.StaticText(self, label="")
+            status.SetName(f"{_humanize(name)} status")
+            self._status_labels[name] = status
+            self._sizer.Add(status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 24)
+        self._refresh_status()
 
     def collect(self) -> FeatureFlags:
         """Return flags with this page's checkbox state applied."""
@@ -215,14 +228,34 @@ class EditingFeaturesPage(_WizardPage):
             kwargs[name] = self.checkboxes[name].GetValue()
         return FeatureFlags(**kwargs)
 
+    def _refresh_status(self) -> None:
+        """Fill each status label with the current asset state.
+
+        Called on construction and whenever the wizard refreshes this
+        page (the dialog's ``_on_page_changed`` hook calls this when
+        the user navigates to a feature page).
+        """
+        for name, label in self._status_labels.items():
+            status = status_for_feature(name)
+            label.SetLabel("Status: " + status)
+            # v1.3.6: re-call SetName so NVDA re-announces the status
+            # change when focus lands back on the row.
+            label.SetName(f"{_humanize(name)} status: {status}")
+
 
 class TTSEnginesPage(_WizardPage):
-    """Two-checkboxes page: Edge TTS and Piper offline TTS."""
+    """Two-checkboxes page: Edge TTS and Piper offline TTS.
+
+    v1.3.5: each TTS engine has a status row showing whether its asset
+    (voice files, piper.exe) is ready, needs a download, or isn't
+    available in this build.
+    """
 
     def __init__(self, parent: wx.Window, *, flags: FeatureFlags) -> None:
         self._flags = flags
         self.checkboxes: dict[str, wx.CheckBox] = {}
         self._descriptions: dict[str, wx.StaticText] = {}
+        self._status_labels: dict[str, wx.StaticText] = {}
         self._has_state = True  # see _save_current_page in setup_wizard.py
         super().__init__(parent, name="Text-to-speech engines")
 
@@ -262,13 +295,28 @@ class TTSEnginesPage(_WizardPage):
             self._descriptions[name] = desc
             desc.SetForegroundColour(wx.Colour(80, 80, 80))
             desc.Wrap(520)
-            self._sizer.Add(desc, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 24)
+            self._sizer.Add(desc, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+
+            # v1.3.5 status row
+            status = wx.StaticText(self, label="")
+            status.SetName(f"{_humanize(name)} status")
+            self._status_labels[name] = status
+            self._sizer.Add(status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 24)
+        self._refresh_status()
 
     def collect(self) -> FeatureFlags:
         kwargs: dict[str, Any] = {}
         for name in TTS_PAGE_FEATURES:
             kwargs[name] = self.checkboxes[name].GetValue()
         return FeatureFlags(**kwargs)
+
+    def _refresh_status(self) -> None:
+        for name, label in self._status_labels.items():
+            status = status_for_feature(name)
+            label.SetLabel("Status: " + status)
+            # v1.3.6: re-call SetName so NVDA re-announces the status
+            # change when focus lands back on the row.
+            label.SetName(f"{_humanize(name)} status: {status}")
 
 
 class DownloadPage(_WizardPage):
@@ -649,7 +697,8 @@ class SummaryPage(_WizardPage):
         for name in FEATURE_NAMES:
             on = getattr(self._flags, name)
             mark = "ON " if on else "OFF"
-            lines.append(f"  [{mark}]  {_humanize(name)}")
+            status = status_for_feature(name)
+            lines.append(f"  [{mark}]  {_humanize(name):<20}  {status}")
         lines.append("")
         lines.append(
             "Click Finish to apply these settings. You can change "
@@ -661,8 +710,11 @@ class SummaryPage(_WizardPage):
         parts = ["Summary of your choices:"]
         for name in FEATURE_NAMES:
             on = getattr(self._flags, name)
-            status = "enabled" if on else "disabled"
-            parts.append(f"{_humanize(name)} is {status}.")
+            on_text = "enabled" if on else "disabled"
+            status = status_for_feature(name)
+            parts.append(
+                f"{_humanize(name)} is {on_text}, status: {status}."
+            )
         return " ".join(parts)
 
     def _build_ui(self) -> None:
@@ -692,6 +744,60 @@ def _humanize(name: str) -> str:
     return " ".join(parts).capitalize()
 
 
+# --- Feature status (v1.3.5) -----------------------------------------------
+#
+# Each feature has an asset-state derived from
+# ``feature_toggling.build_gates(flags)``. We surface the four
+# ``GateDecision`` values as short, plain-language labels so the user
+# can see at a glance which features are ready to use and which need a
+# download. The labels are stable strings so tests can assert on them.
+
+
+_STATUS_LABELS: dict[str, str] = {
+    # feature is off (user disabled it in the wizard)
+    "disabled": "Off",
+    # feature is on, no downloadable asset — it's always ready
+    "enabled": "Ready",
+    # feature is on but the asset isn't on disk yet
+    "needs_download": "Needs download",
+    # feature is on but the asset is a placeholder (not downloadable yet)
+    "unavailable": "Not available in this build",
+}
+
+
+def status_for_feature(feature: str, *, state_file: Path | None = None) -> str:
+    """Return a short status string for ``feature``.
+
+    Reads the current ``FeatureFlags`` from setup.json, builds the
+    gate decisions, and maps the result to one of the ``_STATUS_LABELS``
+    keys. Pure function — used by the wizard pages and by tests.
+
+    The ``state_file`` kwarg is forwarded to
+    :func:`feature_toggling.build_gates` so tests can drive the asset
+    state without touching the real setup.json.
+    """
+    from feature_flags import load_feature_flags
+    from feature_toggling import build_gates
+
+    try:
+        flags = load_feature_flags()
+    except Exception:
+        # Permissive default: all features on, status comes from asset
+        # readiness only. The wizard never blocks on flag-load errors.
+        from feature_flags import FeatureFlags
+        flags = FeatureFlags()
+
+    try:
+        gates = build_gates(flags, state_file=state_file)
+    except Exception:
+        return _STATUS_LABELS["unavailable"]
+
+    gate = gates.get(feature)
+    if gate is None:
+        return _STATUS_LABELS["unavailable"]
+    return _STATUS_LABELS.get(gate.decision, _STATUS_LABELS["unavailable"])
+
+
 __all__ = (
     "EDITING_PAGE_FEATURES",
     "PAGE_NAMES",
@@ -703,4 +809,5 @@ __all__ = (
     "SummaryPage",
     "TTSEnginesPage",
     "WelcomePage",
+    "status_for_feature",
 )

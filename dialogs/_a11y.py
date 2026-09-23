@@ -73,6 +73,36 @@ def name_widget(widget: wx.Window, name: str) -> None:
         widget.SetName(name)
 
 
+def bind_escape_to_cancel(dialog: wx.Dialog) -> None:
+    """Bind Escape on ``dialog`` to call ``EndModal(wx.ID_CANCEL)``.
+
+    Without this, a keyboard-only user has to Tab to the Cancel button
+    before dismissing a modal. The bind is on ``EVT_CHAR_HOOK`` (not
+    ``EVT_KEY_DOWN``) so it fires regardless of which child control
+    has focus inside the dialog — that's the wx-recommended way to
+    handle dialog-level shortcuts.
+
+    Idempotent: calling twice doesn't double-bind.
+
+    See ``dialogs/update_dialog.py:54`` for the original pattern.
+    """
+    # wx's default behaviour already routes Escape to the dialog's
+    # default Cancel button when wx.ID_CANCEL is registered, but
+    # explicit binding also works for dialogs whose only Cancel-equivalent
+    # is a plain wx.Button (e.g. "Close"). Belt and braces.
+    if getattr(dialog, "_escape_bound_v1_3_6", False):
+        return
+
+    def _on_char(event: wx.KeyEvent) -> None:
+        if event.GetKeyCode() == wx.WXK_ESCAPE:
+            dialog.EndModal(wx.ID_CANCEL)
+        else:
+            event.Skip()
+
+    dialog.Bind(wx.EVT_CHAR_HOOK, _on_char)
+    dialog._escape_bound_v1_3_6 = True  # type: ignore[attr-defined]
+
+
 def describe_widget(widget: wx.Window) -> tuple[str, str]:
     """Return (class_name, accessible_name) for diagnostic output."""
     cls = type(widget).__name__

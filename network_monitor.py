@@ -211,74 +211,93 @@ class NetworkMonitorClient(wx.Frame):
     
     def __init__(self, server_ip, port=8765):
         super().__init__(None, title="Voice Actor Monitor (Network)", size=(600, 500))
-        
+        # v1.3.6: accessible names on every interactive widget so NVDA
+        # announces a meaningful description instead of "staticText" /
+        # "frame" / "groupBox" / "gauge".
+        self.SetName(
+            "Voice Actor Monitor (Network) window. Read-only display for "
+            "the voice actor in the studio, showing the current line to "
+            "record, session progress, and director status."
+        )
+
         self.server_ip = server_ip
         self.port = port
         self.socket = None
         self.connected = False
-        
+
         self.init_ui()
         self.connect_to_server()
-    
+
     def init_ui(self):
         panel = wx.Panel(self)
+        panel.SetName("Voice Actor Monitor (Network) panel")
         vbox = wx.BoxSizer(wx.VERTICAL)
-        
+
         # Connection status
         self.connection_status = wx.StaticText(panel, label="Connecting...")
+        self.connection_status.SetName("Connection status, connecting")
         status_font = self.connection_status.GetFont()
         status_font.SetPointSize(10)
         self.connection_status.SetFont(status_font)
         vbox.Add(self.connection_status, 0, wx.ALL | wx.ALIGN_CENTER, 5)
-        
+
         # Large title
         title = wx.StaticText(panel, label="Voice Actor Monitor")
+        title.SetName("Voice Actor Monitor, heading")
         title_font = title.GetFont()
         title_font.SetPointSize(18)
         title_font.SetWeight(wx.FONTWEIGHT_BOLD)
         title.SetFont(title_font)
         vbox.Add(title, 0, wx.ALL | wx.ALIGN_CENTER, 15)
-        
+
         # Current line display
         line_box = wx.StaticBox(panel, label="Current Line to Record")
+        line_box.SetName("Current line to record group")
         line_sizer = wx.StaticBoxSizer(line_box, wx.VERTICAL)
-        
+
         self.current_line_text = wx.TextCtrl(
             panel,
             style=wx.TE_MULTILINE | wx.TE_READONLY,
             size=(-1, 200)
+        )
+        self.current_line_text.SetName(
+            "Current line to record, read-only. Updated by the director."
         )
         line_font = self.current_line_text.GetFont()
         line_font.SetPointSize(14)
         line_font.SetWeight(wx.FONTWEIGHT_BOLD)
         self.current_line_text.SetFont(line_font)
         line_sizer.Add(self.current_line_text, 1, wx.EXPAND | wx.ALL, 5)
-        
+
         vbox.Add(line_sizer, 1, wx.EXPAND | wx.ALL, 10)
-        
+
         # Progress display
         progress_box = wx.StaticBox(panel, label="Session Progress")
+        progress_box.SetName("Session progress group")
         progress_sizer = wx.StaticBoxSizer(progress_box, wx.VERTICAL)
-        
+
         self.progress_gauge = wx.Gauge(panel, range=100, size=(-1, 40))
+        self.progress_gauge.SetName("Session progress gauge")
         progress_sizer.Add(self.progress_gauge, 0, wx.EXPAND | wx.ALL, 5)
-        
+
         self.progress_text = wx.StaticText(panel, label="Waiting for session...")
+        self.progress_text.SetName("Session progress, waiting for session")
         progress_font = self.progress_text.GetFont()
         progress_font.SetPointSize(12)
         self.progress_text.SetFont(progress_font)
         progress_sizer.Add(self.progress_text, 0, wx.ALL | wx.ALIGN_CENTER, 5)
-        
+
         vbox.Add(progress_sizer, 0, wx.EXPAND | wx.ALL, 10)
-        
+
         # Status display
         self.status_text = wx.StaticText(panel, label="Ready")
+        self.status_text.SetName("Director status, ready")
         status_font = self.status_text.GetFont()
         status_font.SetPointSize(14)
         status_font.SetWeight(wx.FONTWEIGHT_BOLD)
         self.status_text.SetFont(status_font)
         vbox.Add(self.status_text, 0, wx.ALL | wx.ALIGN_CENTER, 15)
-        
+
         panel.SetSizer(vbox)
     
     def connect_to_server(self):
@@ -291,18 +310,27 @@ class NetworkMonitorClient(wx.Frame):
                 self.socket.connect((self.server_ip, self.port))
                 self.socket.settimeout(None)  # No timeout on recv after connect
                 self.connected = True
-                
+
                 wx.CallAfter(self.connection_status.SetLabel, f"Connected to {self.server_ip}")
+                # v1.3.6: re-call SetName so NVDA re-announces the new state
+                wx.CallAfter(
+                    self.connection_status.SetName,
+                    f"Connection status: connected to {self.server_ip}",
+                )
                 self._receive_data()
-                
+
             except OSError as e:
                 wx.CallAfter(
                     self.connection_status.SetLabel,
                     f"Connection failed: {e}"
                 )
-        
+                wx.CallAfter(
+                    self.connection_status.SetName,
+                    f"Connection status: connection failed, {e}",
+                )
+
         threading.Thread(target=connect_worker, daemon=True).start()
-    
+
     def _receive_data(self):
         """Receive JSON updates from the server and update the UI."""
         buffer = ""
@@ -311,7 +339,7 @@ class NetworkMonitorClient(wx.Frame):
                 data = self.socket.recv(4096).decode('utf-8')
                 if not data:
                     break  # Server closed connection
-                
+
                 buffer += data
                 while '\n' in buffer:
                     line, buffer = buffer.split('\n', 1)
@@ -321,25 +349,37 @@ class NetworkMonitorClient(wx.Frame):
                             wx.CallAfter(self._update_ui, update)
                         except json.JSONDecodeError:
                             pass
-                            
+
             except OSError:
                 break  # Network error or server closed connection
-            
+
         self.connected = False
         wx.CallAfter(self.connection_status.SetLabel, "Disconnected")
-    
+        # v1.3.6: re-call SetName so NVDA re-announces the disconnect state
+        wx.CallAfter(
+            self.connection_status.SetName,
+            "Connection status: disconnected",
+        )
+
     def _update_ui(self, data):
         """Update UI with received server data."""
         if 'status' in data:
-            self.status_text.SetLabel(data['status'])
-        
+            status = data['status']
+            self.status_text.SetLabel(status)
+            # v1.3.6: re-call SetName so NVDA re-announces the director status
+            self.status_text.SetName(f"Director status: {status}")
+
         if 'progress' in data:
             progress = data['progress']
             self.progress_gauge.SetValue(int(progress.get('progress_percent', 0)))
-            self.progress_text.SetLabel(
-                f"Line {progress.get('current_line', 0)} of {progress.get('total_lines', 0)}"
+            current = progress.get('current_line', 0)
+            total = progress.get('total_lines', 0)
+            self.progress_text.SetLabel(f"Line {current} of {total}")
+            # v1.3.6: re-call SetName on every progress tick so NVDA re-speaks
+            self.progress_text.SetName(
+                f"Session progress: line {current} of {total}"
             )
-        
+
         if 'current_line' in data and data['current_line']:
             line = data['current_line']
             line_text = f"Line {line.get('line_number', '?')}:\n\n"
