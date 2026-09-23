@@ -3277,39 +3277,41 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
             )
             return
         dest_path = installer_staging_path(info.version)
-        progress_dlg = None
 
-        def _on_main_thread(state, downloaded, total):
-            if progress_dlg is not None:
-                progress_dlg.update(state, downloaded, total)
+        # v1.3.5: ShowModal so NVDA focus transfers to the progress
+        # dialog when it appears (non-modal Show() leaves focus on the
+        # parent frame — screen readers announce nothing for the dialog).
+        # ShowModal also runs a nested event loop, so worker CallAfter
+        # posts still flow into the dialog for byte-level updates.
+        from dialogs.download_progress_dialog import DownloadProgressDialog
+        progress_dlg = DownloadProgressDialog(
+            self, file_name=installer.name,
+            total_bytes=installer.size_bytes or 1,
+        )
+
+        # Worker → main-thread state. Held in a dict so the closures in
+        # _worker can write without the enclosing scope complaint.
+        result: dict[str, "UpdateCheckError | None | bool"] = {
+            "ok": False,
+            "err": None,
+        }
 
         def _worker():
             # Wrap the entire body so non-UpdateCheckError exceptions don't
             # vanish into wx's event loop — which is what produced the
             # "clicked Update, nothing happened" symptom on Tracy's machine.
             try:
-                from dialogs.download_progress_dialog import DownloadProgressDialog
-                nonlocal progress_dlg
-                def _show_dialog():
-                    nonlocal progress_dlg
-                    progress_dlg = DownloadProgressDialog(
-                        self, file_name=installer.name,
-                        total_bytes=installer.size_bytes or 1,
-                    )
-                    progress_dlg.Show()
-                wx.CallAfter(_show_dialog)
-                import time
-                time.sleep(0.2)
                 try:
                     download_with_progress(
                         installer.url, dest_path,
                         progress_cb=lambda d, t, s: wx.CallAfter(
-                            _on_main_thread, s, d, t
+                            progress_dlg.update, s, d, t
                         ),
-                        cancel_check=lambda: (progress_dlg.is_cancelled() if progress_dlg else False),
+                        cancel_check=progress_dlg.is_cancelled,
                     )
                 except UpdateCheckError as exc:
-                    wx.CallAfter(self._on_download_failed, str(exc))
+                    result["err"] = exc
+                    wx.CallAfter(progress_dlg.EndModal, wx.ID_CANCEL)
                     return
                 expected = installer.sha256
                 if expected is None:
@@ -3322,21 +3324,29 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
                         os.unlink(dest_path)
                     except OSError:
                         pass
-                    wx.CallAfter(
-                        self._on_download_failed,
-                        "Installer checksum did not match. The download was discarded.",
+                    result["err"] = UpdateCheckError(
+                        "Installer checksum did not match. The download was discarded."
                     )
+                    wx.CallAfter(progress_dlg.EndModal, wx.ID_CANCEL)
                     return
-                wx.CallAfter(self._on_download_verified, dest_path, info)
+                result["ok"] = True
+                wx.CallAfter(progress_dlg.EndModal, wx.ID_OK)
             except Exception as exc:
                 import traceback
                 print("DOWNLOAD WORKER EXCEPTION:\n" + traceback.format_exc(), file=sys.stderr)
-                wx.CallAfter(
-                    self._on_download_failed,
-                    f"Unexpected error: {exc}",
-                )
+                result["err"] = UpdateCheckError(f"Unexpected error: {exc}")
+                wx.CallAfter(progress_dlg.EndModal, wx.ID_CANCEL)
 
         threading.Thread(target=_worker, daemon=True).start()
+        progress_dlg.ShowModal()
+        progress_dlg.Destroy()
+
+        if not result["ok"]:
+            self._on_download_failed(
+                str(result["err"]) if result["err"] else "Download cancelled."
+            )
+            return
+        self._on_download_verified(dest_path, info)
 
     def _on_download_failed(self, message):
         self.SetStatusText("Update download failed")
