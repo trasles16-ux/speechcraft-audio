@@ -2,6 +2,25 @@
 
 All notable changes to SpeechCraft Audio are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/) as far as a single-developer desktop app can.
 
+## [1.3.6] — 2026-09-23
+
+### Changed
+- **Single-EXE install**. Dropped the Core / Full edition split. The NSIS installer now ships **one** `SpeechCraft_Studio.exe` that bundles every Python dep (pedalboard, librosa, scipy, faster_whisper, torch) but no model files. The installer's Welcome page no longer asks the user to pick an edition.
+- **In-app wizard drives feature selection**. The setup wizard (Help → Personalise SpeechCraft…) is now the single source of truth for which features are enabled. Model files (Piper voices, Whisper model, piper.exe) are downloaded on first use via the wizard's Download page. SHA-256 verified.
+- **`SpeechCraft_Studio_Core.spec`** removed. The Core / Full branch of `build_all.py` removed; only one EXE is built now.
+- **`PreferredBundle.txt`** sidecar no longer written by the installer (no edition to record). Existing v1.3.x sidecars still get ingested by `prefs.merge_installer_edition` as a no-op.
+
+### Fixed
+- **NSIS installer bug**: the v1.3.4 BundlePage defaulted to "Core" so users who clicked Next without explicitly clicking Full silently got Core installed. v1.3.6 has no BundlePage.
+- **Updater NVDA silence** (`audio_editor.py:_run_update_download`): v1.3.5's non-modal `Show()` left focus on the parent frame so screen readers announced nothing for the dialog. v1.3.6 uses `ShowModal()` so focus transfers and the live-region label is announced as state transitions.
+- **Updater file log** (`%LOCALAPPDATA%\SpeechCraft\update.log`): every step in the check + download flow now writes to this file because `console=False` makes stderr invisible in the bundled EXE.
+- **Updater rate-limit error** (`updater.py:fetch_latest_release`): HTTP 403 from GitHub now produces a clear "rate-limited, try again in an hour" message instead of a generic HTTP error.
+
+### Removed
+- **`SpeechCraft_Studio_Core.exe`** — no longer built or installed.
+- **`installer/ReadMe_Core.txt`**, **`installer/ReadMe_Full.txt`** — replaced by a single `installer/ReadMe.txt` that doesn't mention editions.
+- **`installer/speechcraft_setup.nsi:BundlePage_Create`** and **`BundlePage_Leave`** — the Core / Full radio choice page is gone.
+
 ## [1.3.5] — 2026-09-23
 
 ### Added

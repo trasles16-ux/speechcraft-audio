@@ -274,6 +274,10 @@ def fetch_latest_release(
             raise UpdateCheckError(
                 "No releases have been published yet on GitHub."
             ) from exc
+        if exc.code == 403:
+            raise UpdateCheckError(
+                "GitHub rate-limited this check. Try again in an hour."
+            ) from exc
         raise UpdateCheckError(
             f"GitHub returned HTTP {exc.code}. Try again later."
         ) from exc
