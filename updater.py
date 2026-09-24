@@ -755,9 +755,17 @@ def installer_staging_path(version: str) -> str:
 def launch_installer(path: str) -> "subprocess.Popen":
     """Spawn the installer EXE detached from the current process.
 
-    Use ``subprocess.Popen`` with no shell, no window, and don't wait.
-    SpeechCraft should quit immediately after calling this so the
-    installer can replace the running EXE.
+    The installer is built with ``RequestExecutionLevel admin`` so it
+    needs UAC elevation. ``subprocess.Popen`` runs without elevation,
+    which fails on locked-down machines with WinError 740 ("requested
+    operation requires elevation"). We try Popen first; if it fails
+    with ERROR_ELEVATION_REQUIRED (740), we retry via
+    ``ShellExecuteExW`` with ``lpVerb="runas"`` — that triggers the
+    standard UAC consent prompt.
+
+    Use ``shell=False``, no window, and don't wait. SpeechCraft should
+    quit immediately after calling this so the installer can replace
+    the running EXE.
 
     Returns the ``Popen`` handle so the caller can verify the installer
     actually started (``poll()`` stays ``None`` for a few seconds)
@@ -779,9 +787,7 @@ def launch_installer(path: str) -> "subprocess.Popen":
         raise UpdateCheckError(
             f"Installer not found at {path}."
         )
-    # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP so SpeechCraft exiting
-    # doesn't kill the installer.
-    flags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+
     # Scrub PyInstaller's internal environment variables. This app is a
     # PyInstaller onefile, so its process environment carries _PYI_*
     # internals (parent-process level, application home dir, …). If the
@@ -799,6 +805,13 @@ def launch_installer(path: str) -> "subprocess.Popen":
     # sets this too (System::Call SetEnvironmentVariableW); this makes
     # the fix work even with an older installer build.
     env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+
+    # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP so SpeechCraft exiting
+    # doesn't kill the installer.
+    flags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+
+    # First attempt: spawn without elevation. This is the fast path on
+    # machines where SpeechCraft is already running as admin.
     try:
         proc = subprocess.Popen(
             [path],
@@ -808,6 +821,11 @@ def launch_installer(path: str) -> "subprocess.Popen":
             env=env,
         )
     except OSError as exc:
+        if getattr(exc, "winerror", None) == 740:
+            # ERROR_ELEVATION_REQUIRED — the installer's NSI manifest
+            # demands admin. Retry via ShellExecuteEx with lpVerb="runas"
+            # so Windows shows the UAC consent prompt.
+            return _launch_installer_elevated(path, env)
         raise UpdateCheckError(
             f"Could not start the installer ({path}). "
             f"Windows error: {exc}. The installer may need elevation "
@@ -815,6 +833,7 @@ def launch_installer(path: str) -> "subprocess.Popen":
             f"remote session where UAC prompts cannot be shown. "
             f"You can run the installer manually: {path}"
         ) from exc
+
     # Give the spawn a beat to fail-fast (e.g. immediate Win32 error),
     # then return the live handle so the caller can poll().
     import time as _time
@@ -827,3 +846,101 @@ def launch_installer(path: str) -> "subprocess.Popen":
             f"it manually."
         )
     return proc
+
+
+def _launch_installer_elevated(
+    path: str, env: dict[str, str]
+) -> "subprocess.Popen":
+    """Launch the installer via ShellExecuteEx with ``runas`` (UAC).
+
+    This triggers the standard Windows UAC consent prompt. The
+    elevated installer runs in a fresh admin token, which has a clean
+    environment — no inherited ``_PYI_*`` variables — so we don't
+    need to plumb the env block through. The installer's own
+    ``LaunchSpeechCraft`` function sets ``PYINSTALLER_RESET_ENVIRONMENT``
+    for the finish-page launch (NSI line 91).
+
+    On success, ``ShellExecuteExW`` returns an HINSTANCE > 32 with
+    ``hProcess`` populated. On failure it returns an error code.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    SEE_MASK_NOCLOSEPROCESS = 0x00000040
+    SW_SHOWNORMAL = 1
+    STILL_ACTIVE = 259
+
+    shell32 = ctypes.windll.shell32
+    kernel32 = ctypes.windll.kernel32
+
+    class SHELLEXECUTEINFO(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", wintypes.DWORD),
+            ("fMask", ctypes.c_ulong),
+            ("hwnd", wintypes.HWND),
+            ("lpVerb", wintypes.LPCWSTR),
+            ("lpFile", wintypes.LPCWSTR),
+            ("lpParameters", wintypes.LPCWSTR),
+            ("lpDirectory", wintypes.LPCWSTR),
+            ("nShow", ctypes.c_int),
+            ("hInstApp", wintypes.HINSTANCE),
+            ("lpIDList", ctypes.c_void_p),
+            ("lpClass", wintypes.LPCWSTR),
+            ("hkeyClass", wintypes.HKEY),
+            ("dwHotKey", ctypes.c_DWORD),
+            ("hMonitor", wintypes.HANDLE),
+            ("hProcess", wintypes.HANDLE),
+        ]
+
+    info = SHELLEXECUTEINFO()
+    info.cbSize = ctypes.sizeof(info)
+    info.fMask = SEE_MASK_NOCLOSEPROCESS
+    info.hwnd = None
+    info.lpVerb = "runas"
+    info.lpFile = path
+    info.lpParameters = None
+    info.lpDirectory = None
+    info.nShow = SW_SHOWNORMAL
+
+    if not shell32.ShellExecuteExW(ctypes.byref(info)):
+        raise UpdateCheckError(
+            f"Could not launch the installer with elevation ({path}). "
+            f"ShellExecuteExW returned {info.hInstApp}. If you are in a "
+            f"remote desktop session, UAC prompts may not be available "
+            f"— run the installer manually: {path}"
+        )
+
+    # Wait a beat so an immediate-exit failure (SmartScreen block, AV)
+    # surfaces as UpdateCheckError instead of a "silent fail".
+    import time as _time
+    _time.sleep(1.0)
+
+    class _ElevatedHandle:
+        """Minimal Popen-like wrapper around the elevated HANDLE."""
+
+        def __init__(self, hProcess: int) -> None:
+            self._hProcess = hProcess
+            self.returncode: int | None = None
+
+        def poll(self) -> int | None:
+            if self.returncode is not None:
+                return self.returncode
+            code_buf = wintypes.DWORD()
+            ok = kernel32.GetExitCodeProcess(self._hProcess, ctypes.byref(code_buf))
+            if not ok:
+                return None
+            code = code_buf.value
+            if code == STILL_ACTIVE:
+                return None
+            self.returncode = code
+            return code
+
+    handle = _ElevatedHandle(info.hProcess)
+    if handle.poll() is not None:
+        raise UpdateCheckError(
+            f"The installer started but exited immediately "
+            f"(code {handle.returncode}) — {path}. It may have been "
+            f"blocked by Windows SmartScreen or Antivirus. Try running "
+            f"it manually."
+        )
+    return handle

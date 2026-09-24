@@ -6,10 +6,39 @@ Catches crashes and logs them to a file for accessibility.
 
 import sys
 import traceback
+import os
+import time
 from pathlib import Path
 from datetime import datetime
 
 ERROR_LOG_NAME = "speechcraft_error.log"
+
+# A second log that traces every step of the launch so silent-close
+# bugs (where the EXE exits without raising anything) leave a paper
+# trail. Goes to %LOCALAPPDATA%\SpeechCraft\speechcraft_launch.log
+# (not the CWD, which differs depending on how the EXE was launched).
+LAUNCH_LOG_NAME = "speechcraft_launch.log"
+
+
+def _launch_log_path() -> Path:
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home())
+        return Path(base) / "SpeechCraft" / LAUNCH_LOG_NAME
+    return Path.home() / ".speechcraft" / LAUNCH_LOG_NAME
+
+
+def _launch_log(msg: str) -> None:
+    """Append a timestamped line to the launch trace log."""
+    try:
+        log_path = _launch_log_path()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
+    except Exception:
+        pass
+
+
+_launch_log("=== launch_speechcraft START pid=" + str(os.getpid()) + " ===")
 
 
 def _write_error_log(log_file: Path, exc_type, exc_value, exc_tb) -> None:
@@ -41,12 +70,17 @@ Troubleshooting Steps:
 5. Use Help -> Report a Bug to file this crash automatically.
 """
     log_file.write_text(error_message, encoding="utf-8")
+    # Also append to the launch trace so a startup failure appears
+    # in the same log the user checks.
+    _launch_log(f"EXCEPTION {exc_type.__name__}: {exc_value}")
+    _launch_log(''.join(traceback.format_exception(exc_type, exc_value, exc_tb)))
 
 
 def launch_speechcraft() -> int:
     """Launch SpeechCraft with error handling and post-crash bug-report offer."""
     log_file = Path(ERROR_LOG_NAME)
 
+    _launch_log("launch_speechcraft entered")
     print("Starting SpeechCraft...")
 
     # Personalise SpeechCraft wizard: shown automatically on first
@@ -62,19 +96,29 @@ def launch_speechcraft() -> int:
         # setup.json as preferred_bundle before the wizard opens.
         # Pure JSON merge - no wx dependency, safe to run headless.
         from prefs import merge_installer_edition
+        _launch_log("merging installer edition sidecar")
         merge_installer_edition()
-    except Exception:
-        pass
+    except Exception as exc:
+        _launch_log(f"merge_installer_edition failed: {exc!r}")
 
     try:
         from setup_wizard import should_show_wizard_on_launch, run_setup_wizard
+        _launch_log(
+            f"wizard_completed={should_show_wizard_on_launch() is False} "
+            f"(False = show wizard)"
+        )
         if should_show_wizard_on_launch():
+            _launch_log("running setup wizard")
             completed, aborted = run_setup_wizard()
+            _launch_log(
+                f"wizard finished completed={completed} aborted={aborted}"
+            )
             if completed:
                 print("[OK] Personalise SpeechCraft completed")
             elif aborted:
                 print("[INFO] Personalise SpeechCraft cancelled")
-    except Exception:
+    except Exception as exc:
+        _launch_log(f"setup wizard failed: {exc!r}")
         # If the wizard fails for any reason (no display, wx missing,
         # import error, etc.) we silently proceed. The user can still
         # open the wizard from Help -> Personalise SpeechCraft later.
@@ -91,10 +135,13 @@ def launch_speechcraft() -> int:
     # broken venv still falls through to the import-error path.
     splash = None
     try:
+        _launch_log("importing wx + creating Splash")
         import wx  # noqa: F401  # smoke test: is wx usable at all?
         from splash import Splash
         splash = Splash()
-    except Exception:
+        _launch_log("Splash created")
+    except Exception as exc:
+        _launch_log(f"Splash create failed: {exc!r}")
         # No splash possible (import error, headless, etc.). The plain
         # print() below still gives sighted devs something to look at.
         pass
@@ -148,13 +195,18 @@ def launch_speechcraft() -> int:
         # the getattr default.
         if splash is not None:
             splash.update("Loading user interface", "Importing wxPython")
+        _launch_log("importing audio_editor.main")
         from audio_editor import main
+        _launch_log("audio_editor.main imported, calling main()")
         print("[OK] SpeechCraft launched successfully")
         # …and we hand control straight to main(). The main frame will
         # appear behind the splash on the same screen, then the splash
         # auto-closes via the wx.App-level logic in audio_editor.main().
-        return main(splash=splash)
+        result = main(splash=splash)
+        _launch_log(f"main() returned {result!r}")
+        return result
     except Exception as e:
+        _launch_log(f"audio_editor.main raised: {e!r}")
         _write_error_log(log_file, type(e), e, e.__traceback__)
         print(f"\n[ERROR] Error logged to: {log_file.absolute()}")
 
