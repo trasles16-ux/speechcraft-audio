@@ -23,12 +23,12 @@ InstallDir "$PROGRAMFILES64\SpeechCraft Studio"
 InstallDirRegKey HKLM "Software\SpeechCraft\Studio" "InstallDir"
 SetCompressor /SOLID lzma
 SetOverwrite on
-VIProductVersion "1.3.6.0"
+VIProductVersion "1.3.6.1.0"
 VIAddVersionKey "ProductName" "SpeechCraft Studio"
 VIAddVersionKey "CompanyName" "Tracy Smith Consulting"
 VIAddVersionKey "LegalCopyright" "Tracy Smith 2026 (MIT)"
 VIAddVersionKey "FileDescription" "Accessible Audio Editor"
-VIAddVersionKey "FileVersion" "1.3.6"
+VIAddVersionKey "FileVersion" "1.3.6.1"
 
 Name "SpeechCraft Studio"
 
@@ -45,8 +45,8 @@ Var HndSidecar
 !include "x64.nsh"
 
 ; ==================== PAGE SEQUENCE ====================
-!define MUI_WELCOMEPAGE_TITLE "Welcome to SpeechCraft Studio 1.3.6"
-!define MUI_WELCOMEPAGE_TEXT "This wizard installs SpeechCraft Studio v1.3.6 on your computer. SpeechCraft Studio is an accessible audio editor. After install, the app opens a setup wizard that walks you through picking features (Piper TTS, local transcription, advanced effects) and downloads the model files they need. Click Next to continue."
+!define MUI_WELCOMEPAGE_TITLE "Welcome to SpeechCraft Studio 1.3.6.1"
+!define MUI_WELCOMEPAGE_TEXT "This wizard installs SpeechCraft Studio v1.3.6.1 on your computer. SpeechCraft Studio is an accessible audio editor. After install, the app opens a setup wizard that walks you through picking features (Piper TTS, local transcription, advanced effects) and downloads the model files they need. Click Next to continue."
 !insertmacro MUI_PAGE_WELCOME
 
 !insertmacro MUI_PAGE_LICENSE "LICENSE.txt"
@@ -54,7 +54,7 @@ Var HndSidecar
 !insertmacro MUI_PAGE_INSTFILES
 
 !define MUI_FINISHPAGE_TITLE "Installation complete"
-!define MUI_FINISHPAGE_TEXT "SpeechCraft Studio 1.3.6 is now installed. Tick the checkboxes below to open the install folder and/or launch SpeechCraft Studio."
+!define MUI_FINISHPAGE_TEXT "SpeechCraft Studio 1.3.6.1 is now installed. Tick the checkboxes below to open the install folder and/or launch SpeechCraft Studio."
 ; "Launch" button on finish page - points at the single installed EXE.
 !define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_TEXT "Launch SpeechCraft Studio"
@@ -127,7 +127,7 @@ Section "SpeechCraft Studio" SecMain
     ; Registry entries - standard Add/Remove Programs keys.
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "DisplayName" "SpeechCraft Studio"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "UninstallString" "$INSTDIR\Uninstall.exe"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "DisplayVersion" "1.3.6"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "DisplayVersion" "1.3.6.1"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeechCraft Studio" "Publisher" "Tracy Smith Consulting"
     WriteRegStr HKLM "Software\SpeechCraft\Studio" "InstallDir" "$INSTDIR"
 
