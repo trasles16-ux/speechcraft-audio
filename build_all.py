@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
-"""Build both SpeechCraft variants and the NSIS installer.
+"""Build the SpeechCraft Studio EXE and the NSIS installer.
+
+Single-EXE architecture (v1.3.6+): one bundled EXE that includes every
+Python dep (pedalboard, librosa, scipy, faster_whisper, torch) but no
+model files. The in-app wizard downloads Piper voices, Whisper
+models, and piper.exe on first use.
 
 Run from the project root with the project venv active::
 
-    python build_all.py           # Build both EXEs + installer
-    python build_all.py --skip-core
-    python build_all.py --skip-full
-    python build_all.py --install  # also installs both into a staging dir for NSIS
+    python build_all.py                # Build EXE + installer
+    python build_all.py --skip-installer   # Just rebuild the EXE
 
 Output:
-    dist/SpeechCraft_Studio_Core.exe
-    dist/SpeechCraft_Studio_Full.exe
-    dist/SpeechCraft_Studio_Setup.exe  (NSIS installer)
+    dist/SpeechCraft_Studio.exe         (the one and only EXE)
+    dist/SpeechCraft_Studio_Setup.exe   (NSIS installer)
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 import shutil
 import subprocess
 import sys
@@ -27,12 +28,14 @@ ROOT = Path(__file__).resolve().parent
 DIST = ROOT / "dist"
 STAGING = ROOT / "build" / "staging"
 
+SPEC = "SpeechCraft_Studio.spec"
+EXE_NAME = "SpeechCraft_Studio"
 
-def build_one(spec: str, dist_name: str) -> Path:
-    """Run PyInstaller for one spec file. Returns the EXE path."""
-    print(f"\n=== Building {dist_name} from {spec} ===")
-    # Clean previous build of this variant but not the others.
-    work_dir = ROOT / "build" / spec.replace("SpeechCraft_Studio", "").replace(".spec", "").lstrip("_").lower() or "default"
+
+def build_one(spec: str, name: str) -> Path:
+    """Run PyInstaller for the spec. Returns the EXE path."""
+    print(f"\n=== Building {name} from {spec} ===")
+    work_dir = ROOT / "build" / name.lower()
     if work_dir.exists():
         shutil.rmtree(work_dir)
 
@@ -49,21 +52,7 @@ def build_one(spec: str, dist_name: str) -> Path:
     if result.returncode != 0:
         sys.exit(f"Build failed for {spec}")
 
-    exe = DIST / f"SpeechCraft_Studio_{dist_name}.exe"
-    if not exe.exists():
-        # Try Core (no underscore) — e.g. SpeechCraft_StudioFull.exe
-        alt = DIST / f"SpeechCraft_Studio{dist_name}.exe"
-        if alt.exists():
-            exe = alt
-        else:
-            # Final fallback: the spec's `name=` directive determines the
-            # actual filename. For the Full spec it's just
-            # "SpeechCraft_Studio" (no suffix); for Core it's
-            # "SpeechCraft_Studio_Core".
-            if dist_name.lower() == "full":
-                alt2 = DIST / "SpeechCraft_Studio.exe"
-                if alt2.exists():
-                    exe = alt2
+    exe = DIST / f"{name}.exe"
     if not exe.exists():
         sys.exit(f"Expected {exe} after build, but file is missing")
     size_mb = exe.stat().st_size / 1024 / 1024
@@ -71,8 +60,8 @@ def build_one(spec: str, dist_name: str) -> Path:
     return exe
 
 
-def stage_for_installer(core_exe: Path, full_exe: Path | None) -> Path:
-    """Copy both EXEs into a staging dir the NSIS script can pack.
+def stage_for_installer(exe: Path) -> Path:
+    """Copy the EXE + bundled docs into a staging dir for NSIS.
 
     Returns the staging dir.
     """
@@ -80,14 +69,7 @@ def stage_for_installer(core_exe: Path, full_exe: Path | None) -> Path:
         shutil.rmtree(STAGING)
     STAGING.mkdir(parents=True)
 
-    # Core: always installed
-    shutil.copy2(core_exe, STAGING / "SpeechCraft_Studio_Core.exe")
-
-    # Full: optional. The installer asks the user.
-    if full_exe and full_exe.exists():
-        shutil.copy2(full_exe, STAGING / "SpeechCraft_Studio_Full.exe")
-
-    # Copy the README and licence so the installer can show them.
+    shutil.copy2(exe, STAGING / f"{EXE_NAME}.exe")
     for name in ("README.md", "LICENSE", "CHANGELOG.md"):
         src = ROOT / name
         if src.exists():
@@ -152,36 +134,24 @@ def _find_makensis() -> Path | None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build SpeechCraft Studio variants + NSIS installer")
-    parser.add_argument("--skip-core", action="store_true", help="Don't build the Core EXE")
-    parser.add_argument("--skip-full", action="store_true", help="Don't build the Full EXE")
-    parser.add_argument("--skip-installer", action="store_true", help="Don't run NSIS")
-    parser.add_argument("--install", action="store_true",
-                        help="Run makensis to produce Setup.exe")
+    parser = argparse.ArgumentParser(
+        description="Build the SpeechCraft Studio EXE and NSIS installer"
+    )
+    parser.add_argument(
+        "--skip-installer", action="store_true",
+        help="Don't run NSIS (just build the EXE).",
+    )
     args = parser.parse_args()
 
     DIST.mkdir(exist_ok=True)
+    exe = build_one(SPEC, EXE_NAME)
 
-    core_exe = full_exe = None
-    if not args.skip_core:
-        core_exe = build_one("SpeechCraft_Studio_Core.spec", "Core")
-    if not args.skip_full:
-        full_exe = build_one("SpeechCraft_Studio.spec", "Full")
-
-    if not args.skip_installer and (core_exe or full_exe):
-        # Use whichever EXE we have for staging. The Core is required
-        # in the installer but Full is optional.
-        if not core_exe:
-            print("WARNING: no Core EXE found; installer will only ship Full.")
-        # symlink alternative: rename to Full so we can stage
-        staging_exe = full_exe if full_exe else core_exe
-        other = core_exe if not full_exe else None
-        staging = stage_for_installer(staging_exe, other)
-
-        if args.install:
-            setup = build_nsis_installer(staging)
-            print(f"\n=== Done ===\n  EXEs:    {DIST}")
-            print(f"  Setup:  {setup}")
+    if not args.skip_installer:
+        staging = stage_for_installer(exe)
+        setup = build_nsis_installer(staging)
+        print(f"\n=== Done ===\n  EXE:    {exe}\n  Setup:  {setup}")
+    else:
+        print(f"\n=== Done ===\n  EXE:    {exe}")
 
     return 0
 

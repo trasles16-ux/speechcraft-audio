@@ -1,51 +1,34 @@
 """Build artifact verification: ensure the bundled EXE contains everything it claims to.
 
-These tests catch the exact failure mode that bit SpeechCraft v1.0.0:
-a 9.4 MB PyInstaller bundle that reported success but silently dropped
-``wx`` (wxPython) and ran with ``ModuleNotFoundError: No module named 'wx'``
-on every user machine.
+Single-EXE architecture (v1.3.6+): the build produces one EXE
+that bundles every Python dep (pedalboard, librosa, scipy,
+faster_whisper, torch). Model files (Piper voices, Whisper models,
+piper.exe) download at runtime via the wizard.
 
-The class of bug is: **PyInstaller exits 0 + artifact under a few MB +
-heavy optional deps** = someone built against a half-installed venv.
-The fix is an explicit check that the PyInstaller output actually
-contains the largest, most-likely-to-be-missing heavy dependency
-(wx in this app's case), and that the EXE size is roughly what we
-expect for a fully-bundled app.
-
-Run via:
+Run with::
     pytest tests/test_build_artifact.py -v
+
+If the EXE is missing, this test is skipped (it's a release gate,
+not a build trigger).
 """
 
-from __future__ import annotations
-
+import os
 import sys
+import zlib
 from pathlib import Path
-from typing import Any
 
 import pytest
 
-ROOT = Path(__file__).resolve().parent.parent
-DIST = ROOT / "dist"
+DIST = Path(__file__).resolve().parent.parent / "dist"
 
-# Modules that MUST be bundled in the Full EXE for the app to start.
-# Without these, the runtime fails with ModuleNotFoundError on the
-# user's machine — exactly the v1.0.0 bug we are guarding against.
-REQUIRED_BUNDLED_PACKAGES_FULL = [
+# Modules that MUST be bundled in the EXE for the app to start.
+# Any module missing here means the EXE will fail at first run.
+REQUIRED_BUNDLED_PACKAGES = [
     ("wx", "wxPython — UI framework"),
     ("numpy", "NumPy — used by all audio modules"),
     ("pydub", "pydub — audio I/O"),
     ("sounddevice", "sounddevice — used by AudioClipboard"),
     ("pedalboard", "pedalboard — effects engine"),
-]
-
-# Core build drops advanced-effects dependencies (pedalboard, scipy,
-# librosa) and local Whisper (faster_whisper + torch). Everything in
-# REQUIRED_BUNDLED_PACKAGES_CORE is needed for Core to run at all.
-REQUIRED_BUNDLED_PACKAGES_CORE = [
-    ("wx", "wxPython — UI framework"),
-    ("numpy", "NumPy — used by all audio modules"),
-    ("pydub", "pydub — audio I/O"),
-    ("sounddevice", "sounddevice — used by AudioClipboard"),
 ]
 
 # Sanity floor: an empty PyInstaller bootloader on Windows is ~7 MB.
@@ -54,17 +37,15 @@ REQUIRED_BUNDLED_PACKAGES_CORE = [
 MIN_EXE_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
 
 
-def _find_exe(variant: str = "Full") -> Path | None:
-    """Find the most recently-built EXE for the given variant."""
+def _find_exe() -> Path | None:
+    """Find the most recently-built SpeechCraft_Studio.exe."""
     if not DIST.exists():
         return None
-    if variant == "Full":
-        pattern = "SpeechCraft_Studio.exe"
-    elif variant == "Core":
-        pattern = "SpeechCraft_Studio_Core.exe"
-    else:
-        return None
-    exes = sorted(DIST.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
+    exes = sorted(
+        DIST.glob("SpeechCraft_Studio.exe"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
     return exes[0] if exes else None
 
 
@@ -108,7 +89,7 @@ def test_exe_exists() -> None:
         )
 
 
-def test_exe_size_sanity(variant="Full") -> None:
+def test_exe_size_sanity() -> None:
     """The EXE should be at least MIN_EXE_SIZE_BYTES.
 
     A 9.4 MB PyInstaller build of SpeechCraft is too small to contain
@@ -116,9 +97,9 @@ def test_exe_size_sanity(variant="Full") -> None:
     torch + faster-whisper. If you see a build under ~50 MB it has
     silently dropped something heavy. Do NOT publish it.
     """
-    exe = _find_exe(variant)
+    exe = _find_exe()
     if exe is None:
-        pytest.skip(f"No {variant} EXE to inspect")
+        pytest.skip("No EXE to inspect")
 
     size = exe.stat().st_size
     assert size >= MIN_EXE_SIZE_BYTES, (
@@ -130,11 +111,11 @@ def test_exe_size_sanity(variant="Full") -> None:
     )
 
 
-def test_exe_toc_is_readable(variant="Full") -> None:
+def test_exe_toc_is_readable() -> None:
     """We must be able to parse the PyInstaller CArchive TOC."""
-    exe = _find_exe(variant)
+    exe = _find_exe()
     if exe is None:
-        pytest.skip(f"No {variant} EXE to inspect")
+        pytest.skip("No EXE to inspect")
 
     toc = _read_pyinstaller_toc(exe)
     assert toc is not None and len(toc) > 0, (
@@ -144,14 +125,14 @@ def test_exe_toc_is_readable(variant="Full") -> None:
     )
 
 
-def test_exe_contains_wx(variant="Full") -> None:
+def test_exe_contains_wx() -> None:
     """The EXE bundle MUST contain wxPython.
 
     This is the exact bug from v1.0.0: a 9.4 MB build missing wx.
     """
-    exe = _find_exe(variant)
+    exe = _find_exe()
     if exe is None:
-        pytest.skip(f"No {variant} EXE to inspect")
+        pytest.skip("No EXE to inspect")
 
     toc = _read_pyinstaller_toc(exe)
     assert toc is not None, "Cannot parse TOC"
@@ -168,13 +149,10 @@ def test_exe_contains_wx(variant="Full") -> None:
     )
 
 
-def _check_module_in_exe(variant: str, module: str, description: str) -> None:
-    import os
-    import zlib
-
-    exe = _find_exe(variant)
+def _check_module_in_exe(module: str, description: str) -> None:
+    exe = _find_exe()
     if exe is None:
-        pytest.skip(f"No {variant} EXE to inspect")
+        pytest.skip("No EXE to inspect")
 
     toc = _read_pyinstaller_toc(exe)
     assert toc is not None, "Cannot parse TOC"
@@ -215,65 +193,14 @@ def _check_module_in_exe(variant: str, module: str, description: str) -> None:
     )
 
 
-@pytest.mark.parametrize("module,description", REQUIRED_BUNDLED_PACKAGES_FULL)
-def test_full_exe_contains_required_module(module: str, description: str) -> None:
-    """Full build must bundle these heavy deps."""
-    _check_module_in_exe("Full", module, description)
+@pytest.mark.parametrize("module,description", REQUIRED_BUNDLED_PACKAGES)
+def test_exe_contains_required_module(module: str, description: str) -> None:
+    """The single EXE must bundle every Python dep the app might need.
 
-
-@pytest.mark.parametrize("module,description", REQUIRED_BUNDLED_PACKAGES_CORE)
-def test_core_exe_contains_required_module(module: str, description: str) -> None:
-    """Core build must bundle wx + numpy + pydub + sounddevice but can
-    safely skip pedalboard, librosa, scipy, faster_whisper, torch."""
-    _check_module_in_exe("Core", module, description)
-
-
-def test_core_exe_excludes_heavy_modules() -> None:
-    """Core build must NOT contain pedalboard, faster_whisper, or torch.
-
-    These are huge and optionally downloaded. If they sneak back in
-    because some hidden import pulled them in, this test will fail and
-    alert us.
+    Model files (Piper voices, Whisper models) are downloaded by the
+    wizard, but the Python deps themselves must be bundled.
     """
-    import os
-    import zlib
-
-    exe = _find_exe("Core")
-    if exe is None:
-        pytest.skip("No Core EXE to inspect")
-
-    from pyinstxtractor_ng import PyInstArchive
-    archive = PyInstArchive(str(exe))
-    archive.open()
-    archive.checkFile()
-    archive.getCArchiveInfo()
-    archive.parseTOC()
-    try:
-        # Find PYZ archive
-        raw = b""
-        for entry in archive.tocList:
-            if entry.name == "PYZ.pyz":
-                archive.fPtr.seek(entry.position, os.SEEK_SET)
-                data = archive.fPtr.read(entry.cmprsdDataSize)
-                if entry.cmprsFlag == 1:
-                    data = zlib.decompress(data)
-                raw = data
-                break
-
-        # Check that "pedalboard" / "faster_whisper" / "torch" are NOT
-        # embedded as module names. Whitelist: "faster" + "whisper" may
-        # appear as part of unrelated strings, so we look at byte
-        # patterns characteristic of Python module names.
-        forbidden = ["pedalboard/", "faster_whisper/", "torch/"]
-        for token in forbidden:
-            if token.encode() in raw:
-                pytest.fail(
-                    f"Core EXE {exe.name} ({exe.stat().st_size / 1024 / 1024:.1f} MB) "
-                    f"contains '{token}' byte sequence — heavy module sneaked in. "
-                    f"Either update _Core.spec excludes, or move to Full build."
-                )
-    finally:
-        archive.close()
+    _check_module_in_exe(module, description)
 
 
 if __name__ == "__main__":

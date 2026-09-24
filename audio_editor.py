@@ -1,6 +1,6 @@
 #: SpeechCraft Studio version. Bumped in lockstep with the NSIS installer
 #: version (installer/speechcraft_setup.nsi) and with the GitHub release tag.
-__version__ = "1.3.5"
+__version__ = "1.3.6"
 
 import wx
 import os
@@ -150,10 +150,12 @@ def _audio_effects_available() -> bool:
 
 
 def _show_core_effects_hint_once() -> None:
-    """One-time explanation when Core's greyed-out pedalboard items appear.
+    """One-time explanation when advanced-effects items stay greyed out.
 
-    Persisted in setup.json so it shows exactly once; the user can
-    dismiss it and won't be nagged again.
+    v1.3.6+: the single EXE bundles pedalboard, so this should never
+    fire. It remains as defensive code for the rare case where
+    audio_effects becomes a :class:`DummyModule` (corrupted install,
+    partially-extracted PyInstaller bundle, etc.).
     """
     from prefs import load_prefs, save_prefs
     prefs = load_prefs()
@@ -163,11 +165,11 @@ def _show_core_effects_hint_once() -> None:
     save_prefs(prefs)
     wx.MessageBox(
         "Some effects (Room Remover, Compressor, De-esser, Equalizer, "
-        "Auto-Ducker) are greyed out because you're running the Core "
-        "edition, which doesn't include the pedalboard engine.\n\n"
-        "To install these effects, re-run the SpeechCraft installer and "
-        "choose the Full edition. Your settings and projects are kept.",
-        "Core edition — advanced effects not installed",
+        "Auto-Ducker) are greyed out because the pedalboard engine "
+        "couldn't load.\n\n"
+        "Reinstall SpeechCraft Studio to restore the missing components. "
+        "Your settings and projects are kept.",
+        "Advanced effects unavailable",
         wx.OK | wx.ICON_INFORMATION,
     )
 
@@ -583,16 +585,17 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
         _set(getattr(self, "line_placer_item", None), line_placing_ok)
 
         # Pedalboard effects (Effects menu). The user's flag is a
-        # preference; on Core builds the pedalboard engine isn't
-        # bundled, so audio_effects is a DummyModule and these items
-        # must stay disabled regardless of the flag.
+        # preference; in v1.3.6+ the single EXE bundles pedalboard,
+        # so audio_effects is the real module unless something is wrong
+        # (corrupted install, etc.). These items must stay disabled
+        # if audio_effects fell back to DummyModule.
         pedalboard_on = (
             gates["pedalboard_effects"].enabled
             and _audio_effects_available()
         )
         for item in getattr(self, "effects_pedalboard_items", []):
             _set(item, pedalboard_on)
-        # One-time hint when Core greyed out effects the user wanted.
+        # One-time hint if the user wanted effects but they're unavailable.
         if gates["pedalboard_effects"].enabled and not pedalboard_on:
             _show_core_effects_hint_once()
 
@@ -3190,14 +3193,34 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
     def _start_update_check(self, *, manual):
         from updater import fetch_latest_release, UpdateCheckError
         import threading
+        import time
         self.SetStatusText("Checking for updates...")
+        log_path = os.path.join(
+            os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+            "SpeechCraft",
+            "update.log",
+        )
+
+        def _ulog(msg: str) -> None:
+            try:
+                os.makedirs(os.path.dirname(log_path), exist_ok=True)
+                with open(log_path, "a", encoding="utf-8") as fh:
+                    fh.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
+            except Exception:
+                pass
+
+        _ulog(f"_start_update_check manual={manual} current=v{__version__}")
         def _worker():
             try:
                 info = fetch_latest_release()
+                _ulog(f"fetch_latest_release OK version={info.version}")
             except UpdateCheckError as exc:
+                _ulog(f"fetch_latest_release UpdateCheckError: {exc}")
                 wx.CallAfter(self._on_update_check_failed, str(exc), manual)
                 return
             except Exception as exc:
+                import traceback
+                _ulog(f"fetch_latest_release exception:\n{traceback.format_exc()}")
                 wx.CallAfter(self._on_update_check_failed, f"Unexpected error: {exc}", manual)
                 return
             wx.CallAfter(self._on_update_check_ok, info, manual)
@@ -3269,6 +3292,7 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
             verify_asset_sha256,
         )
         import threading
+        import time
         installer = info.find_installer()
         if installer is None:
             wx.MessageBox(
@@ -3289,6 +3313,26 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
             total_bytes=installer.size_bytes or 1,
         )
 
+        # File logger — PyInstaller builds with console=False, so
+        # print(..., file=sys.stderr) is invisible. The log gives us a
+        # trail to diagnose silent update failures (the user's reported
+        # "NVDA says unknown, then nothing happens" symptom).
+        log_path = os.path.join(
+            os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+            "SpeechCraft",
+            "update.log",
+        )
+
+        def _ulog(msg: str) -> None:
+            try:
+                os.makedirs(os.path.dirname(log_path), exist_ok=True)
+                with open(log_path, "a", encoding="utf-8") as fh:
+                    fh.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
+            except Exception:
+                pass
+
+        _ulog(f"_run_update_download START url={installer.url} dest={dest_path}")
+
         # Worker → main-thread state. Held in a dict so the closures in
         # _worker can write without the enclosing scope complaint.
         result: dict[str, "UpdateCheckError | None | bool"] = {
@@ -3297,10 +3341,12 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
         }
 
         def _worker():
+            _ulog("worker thread started")
             # Wrap the entire body so non-UpdateCheckError exceptions don't
             # vanish into wx's event loop — which is what produced the
             # "clicked Update, nothing happened" symptom on Tracy's machine.
             try:
+                _ulog(f"calling download_with_progress url={installer.url}")
                 try:
                     download_with_progress(
                         installer.url, dest_path,
@@ -3309,7 +3355,9 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
                         ),
                         cancel_check=progress_dlg.is_cancelled,
                     )
+                    _ulog("download_with_progress returned (success)")
                 except UpdateCheckError as exc:
+                    _ulog(f"download_with_progress raised UpdateCheckError: {exc}")
                     result["err"] = exc
                     wx.CallAfter(progress_dlg.EndModal, wx.ID_CANCEL)
                     return
@@ -3319,26 +3367,32 @@ class SpeechCraftFrame(TTSMenuMixin, wx.Frame):
                         digest_url=installer.url + ".sha256",
                         asset_name=installer.name,
                     )
+                _ulog(f"verifying sha256 expected={expected}")
                 if expected is not None and not verify_asset_sha256(dest_path, expected):
                     try:
                         os.unlink(dest_path)
                     except OSError:
                         pass
+                    _ulog("checksum mismatch")
                     result["err"] = UpdateCheckError(
                         "Installer checksum did not match. The download was discarded."
                     )
                     wx.CallAfter(progress_dlg.EndModal, wx.ID_CANCEL)
                     return
+                _ulog("checksum ok, signalling success")
                 result["ok"] = True
                 wx.CallAfter(progress_dlg.EndModal, wx.ID_OK)
             except Exception as exc:
                 import traceback
-                print("DOWNLOAD WORKER EXCEPTION:\n" + traceback.format_exc(), file=sys.stderr)
+                tb = traceback.format_exc()
+                _ulog(f"WORKER EXCEPTION:\n{tb}")
                 result["err"] = UpdateCheckError(f"Unexpected error: {exc}")
                 wx.CallAfter(progress_dlg.EndModal, wx.ID_CANCEL)
 
         threading.Thread(target=_worker, daemon=True).start()
-        progress_dlg.ShowModal()
+        _ulog(f"calling ShowModal — dialog name={progress_dlg.GetName()!r} title={progress_dlg.GetTitle()!r}")
+        rc = progress_dlg.ShowModal()
+        _ulog(f"ShowModal returned rc={rc} ok={result['ok']} err={result['err']}")
         progress_dlg.Destroy()
 
         if not result["ok"]:
