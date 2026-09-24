@@ -74,13 +74,17 @@ FEATURE_ASSETS: Final = {
             "files": [
                 {"name": "piper.exe",
                  "url": "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip",
-                 "sha256": "",
-                 "sha256_url": "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip.sha256",
-                 "size_bytes": 31_889_408,
+                 # SHA-256 of piper_windows_amd64.zip v2023.11.14-2
+                 # (verified against GitHub release at install time —
+                 # the sibling .sha256 sidecar 404s, so we hardcode it).
+                 "sha256": "f3c58906402b24f3a96d92145f58acba6d86c9b5db896d207f78dc80811efcea",
+                 "sha256_url": "",
+                 # 22,477,236 bytes — verified by HEAD request 2026-09-23.
+                 "size_bytes": 22_477_236,
                  "extract": "zip",
                  "extract_entry": "piper/piper.exe"},
             ],
-            "description": "Piper TTS executable (Windows, 64-bit, ~30 MB)",
+            "description": "Piper TTS executable (Windows, 64-bit, ~22 MB)",
         },
         "en_GB.cori": {
             "files": [
@@ -316,32 +320,60 @@ def _extract_from_zip(
     ``entry_name`` can be the literal name (e.g. ``piper/piper.exe``)
     or a short suffix (e.g. ``piper.exe``); the matcher prefers the
     literal name and falls back to a basename match.
+
+    If the zip file is truncated or otherwise corrupt, ``zipfile``
+    raises ``EOFError`` mid-read (zipfile's central directory can
+    reference an entry whose compressed bytes never landed on disk).
+    We catch that and re-raise as ``OSError`` with a clear message
+    so the caller can surface a friendly "the download was truncated,
+    please try again" instead of a Python traceback.
     """
     import zipfile
 
-    with zipfile.ZipFile(zip_path) as zf:
-        names = zf.namelist()
-        # Literal match first
-        target: str | None = entry_name if entry_name in names else None
-        if target is None and entry_name:
-            # Fall back to basename match (e.g. "piper/piper.exe" -> "piper.exe")
-            short = entry_name.rsplit("/", 1)[-1]
-            for n in names:
-                if n.endswith("/" + short) or n == short:
-                    target = n
-                    break
-        if target is None:
-            raise OSError(
-                f"{entry_name!r} not found in zip; archive contains: {names}"
-            )
-        out_path = out_dir / Path(target).name
-        out_dir.mkdir(parents=True, exist_ok=True)
-        with zf.open(target) as src, open(out_path, "wb") as dst:
-            while True:
-                chunk = src.read(1 << 20)
-                if not chunk:
-                    break
-                dst.write(chunk)
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            names = zf.namelist()
+            # Literal match first
+            target: str | None = entry_name if entry_name in names else None
+            if target is None and entry_name:
+                # Fall back to basename match (e.g. "piper/piper.exe" -> "piper.exe")
+                short = entry_name.rsplit("/", 1)[-1]
+                for n in names:
+                    if n.endswith("/" + short) or n == short:
+                        target = n
+                        break
+            if target is None:
+                raise OSError(
+                    f"{entry_name!r} not found in zip; archive contains: {names}"
+                )
+            out_path = out_dir / Path(target).name
+            out_dir.mkdir(parents=True, exist_ok=True)
+            with zf.open(target) as src, open(out_path, "wb") as dst:
+                while True:
+                    chunk = src.read(1 << 20)
+                    if not chunk:
+                        break
+                    dst.write(chunk)
+    except EOFError as exc:
+        # Truncated / corrupt zip. The most common cause is a download
+        # that bailed out partway and slipped through
+        # download_with_progress's content-length accounting (e.g.
+        # the server returned a Content-Length that didn't match what
+        # it actually delivered, or the connection was reset after
+        # the last byte was written). Re-raise as OSError so the
+        # caller's ``except OSError`` branch catches it and the
+        # downstream state-file cleanup runs.
+        try:
+            os.unlink(zip_path)
+        except OSError:
+            pass
+        size = os.path.getsize(zip_path) if os.path.isfile(zip_path) else 0
+        raise OSError(
+            f"Zip file {zip_path} is truncated or corrupt "
+            f"({size:,} bytes on disk; reading entry {entry_name!r} hit "
+            f"end-of-file). The download was incomplete — re-downloading "
+            f"should fix it."
+        ) from exc
     return out_path
 
 

@@ -642,6 +642,23 @@ def download_with_progress(
 
         # Success for this attempt.
         range_from += bytes_this_attempt
+
+        # If the server reported a Content-Length, the bytes on disk
+        # must match it. A mismatch means the connection was reset
+        # (or the server lied) and we got a truncated file — a
+        # downstream zipfile.ZipFile would die with EOFError on the
+        # next read. Treat it as a transient error and retry.
+        if total > 0 and range_from != total:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            last_error = UpdateCheckError(
+                f"Download was truncated: got {range_from:,} bytes, "
+                f"Content-Length promised {total:,}. Retrying."
+            )
+            continue
+
         if cb is not None:
             cb(range_from, total, "verifying")
 
@@ -756,16 +773,23 @@ def launch_installer(path: str) -> "subprocess.Popen":
     """Spawn the installer EXE detached from the current process.
 
     The installer is built with ``RequestExecutionLevel admin`` so it
-    needs UAC elevation. ``subprocess.Popen`` runs without elevation,
-    which fails on locked-down machines with WinError 740 ("requested
-    operation requires elevation"). We try Popen first; if it fails
-    with ERROR_ELEVATION_REQUIRED (740), we retry via
-    ``ShellExecuteExW`` with ``lpVerb="runas"`` — that triggers the
-    standard UAC consent prompt.
+    needs UAC elevation. ``subprocess.Popen`` runs without elevation
+    and Windows returns WinError 740 (ERROR_ELEVATION_REQUIRED) when
+    the installer's manifest demands admin. We try Popen first; on
+    *any* spawn failure (winerror 740, 5, 7401, anything) we fall
+    back to ``ShellExecuteExW`` with ``lpVerb="runas"`` — that
+    triggers the standard UAC consent prompt and is the documented
+    way to elevate from a non-elevated process.
 
-    Use ``shell=False``, no window, and don't wait. SpeechCraft should
-    quit immediately after calling this so the installer can replace
-    the running EXE.
+    The fallback is broad because Popen's behaviour around manifests
+    varies across Windows versions — sometimes 740, sometimes a silent
+    no-op, occasionally 5 (access denied) when the UAC prompt is
+    auto-dismissed. Going straight to ShellExecuteExW in all cases
+    means the user sees the UAC prompt every time, which is the
+    behavior the installer actually wants.
+
+    SpeechCraft should quit immediately after calling this so the
+    installer can replace the running EXE.
 
     Returns the ``Popen`` handle so the caller can verify the installer
     actually started (``poll()`` stays ``None`` for a few seconds)
@@ -811,7 +835,11 @@ def launch_installer(path: str) -> "subprocess.Popen":
     flags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
 
     # First attempt: spawn without elevation. This is the fast path on
-    # machines where SpeechCraft is already running as admin.
+    # machines where SpeechCraft is already running as admin (or where
+    # the installer's manifest doesn't require it). Any failure falls
+    # back to ShellExecuteExW with runas — that's the documented path
+    # for elevating from a non-elevated caller.
+    first_error: OSError | None = None
     try:
         proc = subprocess.Popen(
             [path],
@@ -820,36 +848,53 @@ def launch_installer(path: str) -> "subprocess.Popen":
             shell=False,
             env=env,
         )
-    except OSError as exc:
-        if getattr(exc, "winerror", None) == 740:
-            # ERROR_ELEVATION_REQUIRED — the installer's NSI manifest
-            # demands admin. Retry via ShellExecuteEx with lpVerb="runas"
-            # so Windows shows the UAC consent prompt.
-            return _launch_installer_elevated(path, env)
-        raise UpdateCheckError(
-            f"Could not start the installer ({path}). "
-            f"Windows error: {exc}. The installer may need elevation "
-            f"(right-click, Run as administrator) or you may be in a "
-            f"remote session where UAC prompts cannot be shown. "
-            f"You can run the installer manually: {path}"
-        ) from exc
-
-    # Give the spawn a beat to fail-fast (e.g. immediate Win32 error),
-    # then return the live handle so the caller can poll().
-    import time as _time
-    _time.sleep(1.0)
-    if proc.poll() is not None:
-        raise UpdateCheckError(
-            f"The installer started but exited immediately "
-            f"(code {proc.returncode}) — {path}. It may have been "
-            f"blocked by Windows SmartScreen or Antivirus. Try running "
-            f"it manually."
+        # Give the spawn a beat to fail-fast (e.g. immediate Win32
+        # error). If the installer started and is alive, return the
+        # live handle. If it died immediately, that's the installer's
+        # own error (SmartScreen block, missing DLL, etc.) and the
+        # user already saw something — surface it.
+        import time as _time
+        _time.sleep(1.0)
+        if proc.poll() is None:
+            return proc
+        first_error = OSError(
+            f"Popen returned a handle that exited immediately "
+            f"(code {proc.returncode})"
         )
+    except OSError as exc:
+        first_error = exc
+        _log_launch_attempt(
+            f"Popen raised winerror={getattr(exc, 'winerror', None)} "
+            f"errno={exc.errno}: {exc}"
+        )
+
+    # Either Popen raised, or it returned a handle that exited
+    # immediately. Try ShellExecuteExW with runas — the standard UAC
+    # path. This works regardless of the exact Popen failure mode.
+    _log_launch_attempt("falling back to ShellExecuteExW with runas")
+    return _launch_installer_elevated(path, env, first_error)
+
+
+def _log_launch_attempt(msg: str) -> None:
+    """Append a launch attempt detail to the update log so we can
+    diagnose WinError 740 (and friends) after the fact."""
+    try:
+        log_path = os.path.join(
+            os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+            "SpeechCraft",
+            "update.log",
+        )
+        import time as _time
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write(f"[{_time.strftime('%H:%M:%S')}] {msg}\n")
+    except Exception:
+        pass
     return proc
 
 
 def _launch_installer_elevated(
-    path: str, env: dict[str, str]
+    path: str, env: dict[str, str], first_error: OSError | None = None
 ) -> "subprocess.Popen":
     """Launch the installer via ShellExecuteEx with ``runas`` (UAC).
 
@@ -862,6 +907,10 @@ def _launch_installer_elevated(
 
     On success, ``ShellExecuteExW`` returns an HINSTANCE > 32 with
     ``hProcess`` populated. On failure it returns an error code.
+
+    ``first_error`` is the original OSError from the Popen attempt,
+    included in the final UpdateCheckError message if ShellExecuteExW
+    also fails — gives the user a single diagnostic to work with.
     """
     import ctypes
     from ctypes import wintypes
@@ -887,7 +936,7 @@ def _launch_installer_elevated(
             ("lpIDList", ctypes.c_void_p),
             ("lpClass", wintypes.LPCWSTR),
             ("hkeyClass", wintypes.HKEY),
-            ("dwHotKey", ctypes.c_DWORD),
+            ("dwHotKey", wintypes.DWORD),
             ("hMonitor", wintypes.HANDLE),
             ("hProcess", wintypes.HANDLE),
         ]
@@ -902,12 +951,23 @@ def _launch_installer_elevated(
     info.lpDirectory = None
     info.nShow = SW_SHOWNORMAL
 
+    _log_launch_attempt(
+        f"ShellExecuteExW with runas for {path}"
+    )
+
     if not shell32.ShellExecuteExW(ctypes.byref(info)):
+        # ShellExecuteExW returned <= 32 (failure). Surface the
+        # underlying error code so the user can see what failed.
+        first_msg = (
+            f" First Popen attempt failed: {first_error}."
+            if first_error is not None
+            else ""
+        )
         raise UpdateCheckError(
             f"Could not launch the installer with elevation ({path}). "
-            f"ShellExecuteExW returned {info.hInstApp}. If you are in a "
-            f"remote desktop session, UAC prompts may not be available "
-            f"— run the installer manually: {path}"
+            f"ShellExecuteExW returned {info.hInstApp}.{first_msg} "
+            f"If you are in a remote desktop session, UAC prompts may "
+            f"not be available — run the installer manually: {path}"
         )
 
     # Wait a beat so an immediate-exit failure (SmartScreen block, AV)
