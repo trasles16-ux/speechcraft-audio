@@ -17,6 +17,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import ctypes
 import os
 import subprocess
 import sys
