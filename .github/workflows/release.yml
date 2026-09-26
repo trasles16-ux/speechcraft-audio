@@ -30,7 +30,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-          python -m pip install pyinstaller
+          python -m pip install pyinstaller pytest
 
       - name: Run tests
         run: python -m pytest tests/test_pure_logic.py tests/test_feature_flags.py tests/test_feature_toggling.py tests/test_feature_manager.py tests/test_prefs.py tests/test_installer_edition_merge.py -q
