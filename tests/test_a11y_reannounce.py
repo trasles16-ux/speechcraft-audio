@@ -170,13 +170,16 @@ def test_batch_progress_and_button_mirror_setname():
 
 def test_wizard_status_rows_mirror_setname():
     """Wizard EditingFeatures / TTSEnginesPage status rows re-announce
-    on every refresh_status() call."""
+    on every refresh_status() call.
+
+    v1.3.7: the announcement text is built into an ``accessible``
+    variable (so "Needs download" rows can append where the download
+    button lives) and both pages SetName(accessible).
+    """
     src = _read("setup_wizard_pages.py")
 
     # The two _refresh_status methods both call SetName with the new status
-    occurrences = src.count(
-        'label.SetName(f"{_humanize(name)} status: {status}")'
-    )
+    occurrences = src.count("label.SetName(accessible)")
     assert occurrences == 2, (
         f"Expected 2 SetName sites in _refresh_status, found {occurrences}"
     )

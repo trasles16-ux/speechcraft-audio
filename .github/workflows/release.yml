@@ -1,33 +1,23 @@
-name: Build SpeechCraft Release EXE (with data files)
+name: Release SpeechCraft Studio
 
-# Manual-only trigger. Originally this ran on `release: published` to
-# upload a CI-built EXE back to the same release, but:
-#   1. It fights with the local build workflow — releases are uploaded
-#      from Tracy's Windows machine (Full + Core + NSIS Setup), and a
-#      CI rebuild would only produce the Full EXE.
-#   2. The `release: published` trigger was intermittently returning a
-#      404 (stale release ID in the github.event.release.id context),
-#      producing red ❌ on otherwise-correct releases.
-#   3. The "smoke-test-only" data source still works via this workflow
-#      for an ephemeral build verification, but doesn't auto-attach
-#      anything to a release.
+# Tag-driven release: push a v* tag -> tests run, the EXE and the NSIS
+# Setup.exe are built, checksummed, and attached to a GitHub Release.
+# The EXE build needs the same Windows-only deps as local builds (see
+# requirements.txt); the vendored tools/nsis NSIS 3.10 compiles the
+# installer so CI and local builds stay byte-identical in behaviour.
 #
-# If you need a one-off CI build, hit "Run workflow" from the Actions
-# tab and pick a data source.
+# Replaces the v1.3.6 manual-only workflow that never built the
+# Setup.exe and carried dead release-trigger code.
+
 on:
-  workflow_dispatch:
-    inputs:
-      data_source:
-        description: 'How to get the data files'
-        type: choice
-        required: true
-        default: 'release-assets'
-        options:
-          - release-assets
-          - smoke-test-only
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
 
 jobs:
-  build:
+  release:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,70 +26,80 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Python dependencies
-        run: pip install -r requirements.txt pyinstaller
-
-      # Download the data files as a release asset, but only if a release is published
-      - name: Download data bundle from release assets (if available)
-        if: github.event_name == 'release' || inputs.data_source == 'release-assets'
-        shell: pwsh
+      - name: Install dependencies
         run: |
-          $assets = $env:GITHUB_API_URL + "/repos/${{ github.repository }}/releases/${{ github.event.release.id }}/assets"
-          Write-Host "Looking for data assets in release: $assets"
-          # Try common names
-          $candidates = @("help.zip", "piper_models.zip", "espeak-ng-data.zip", "ffmpeg.exe")
-          foreach ($name in $candidates) {
-            $url = "$assets/$name"
-            try {
-              $ProgressPreference = 'SilentlyContinue'
-              Invoke-WebRequest -Uri $url -OutFile $name -Headers @{ "Authorization" = "token ${{ secrets.GITHUB_TOKEN }}" }
-              Write-Host "Downloaded: $name"
-            } catch {
-              Write-Host "Skipped: $name (not in release assets)"
-            }
-          }
-          # Extract zips if any
-          Get-ChildItem -Filter *.zip | ForEach-Object {
-            Write-Host "Extracting $($_.Name)..."
-            Expand-Archive -Path $_.Name -DestinationPath . -Force
-            Remove-Item $_.Name
-          }
-          # Show what we got
-          Write-Host "--- Current data folders ---"
-          Get-ChildItem -Directory | Select-Object Name
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
 
-      - name: Build with PyInstaller
+      - name: Run tests
+        run: python -m pytest tests/test_pure_logic.py tests/test_feature_flags.py tests/test_feature_toggling.py tests/test_feature_manager.py tests/test_prefs.py tests/test_installer_edition_merge.py -q
+
+      - name: Build EXE
         run: pyinstaller SpeechCraft_Studio.spec --noconfirm
 
       - name: Verify EXE was produced
         shell: pwsh
         run: |
-          if (Test-Path "dist/SpeechCraft_Studio.exe") {
-            $size = (Get-Item "dist/SpeechCraft_Studio.exe").Length / 1MB
-            Write-Host "EXE size: $([math]::Round($size, 1)) MB"
-          } else {
-            Write-Error "No EXE produced!"
+          if (-not (Test-Path "dist/SpeechCraft_Studio.exe")) { Write-Error "No EXE produced!"; exit 1 }
+          $size = (Get-Item "dist/SpeechCraft_Studio.exe").Length / 1MB
+          Write-Host ("EXE size: {0:N1} MB" -f $size)
+
+      - name: Stage for NSIS
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build/staging | Out-Null
+          Copy-Item dist/SpeechCraft_Studio.exe build/staging/
+          Copy-Item installer/ReadMe.txt build/staging/ReadMe.txt
+
+      - name: Build NSIS Setup.exe
+        shell: pwsh
+        run: |
+          $makensis = "tools/nsis/nsis-3.10/Bin/makensis.exe"
+          $version = (Select-String -Path audio_editor.py -Pattern '__version__ = "([^"]+)"').Matches[0].Groups[1].Value
+          $tag = "$env:GITHUB_REF_NAME"
+          if ($tag -ne "v$version") {
+            Write-Error "Tag $tag does not match audio_editor.py __version__ $version. Bump one of them."
             exit 1
           }
+          New-Item -ItemType Directory -Force -Path build/nsis-out | Out-Null
+          & $makensis /DAPP_VERSION=$version /DSTAGING="$(Resolve-Path build/staging)" /DOUT_DIR="$(Resolve-Path build/nsis-out)" installer/speechcraft_setup.nsi
+          if ($LASTEXITCODE -ne 0) { Write-Error "NSIS compile failed"; exit 1 }
 
-      # If triggered by a release (rare — see top-of-file comment), attach the EXE
-      - name: Attach EXE to release (if release trigger)
-        if: github.event_name == 'release'
+      - name: Installer smoke test (silent install, verify, uninstall)
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $releaseId = "${{ github.event.release.id }}"
-          $url = $env:GITHUB_API_URL + "/repos/${{ github.repository }}/releases/$releaseId/assets?name=SpeechCraft_Studio.exe"
-          Write-Host "Uploading EXE to release: $url"
-          $ProgressPreference = 'SilentlyContinue'
-          Invoke-WebRequest -Uri $url -Method Post -InFile "dist/SpeechCraft_Studio.exe" `
-            -Headers @{ "Authorization" = "token $env:GH_TOKEN"; "Content-Type" = "application/octet-stream" }
-          Write-Host "Upload complete"
+          $version = (Select-String -Path audio_editor.py -Pattern '__version__ = "([^"]+)"').Matches[0].Groups[1].Value
+          python scripts/installer_smoke.py --setup build/nsis-out/SpeechCraft_Studio_Setup.exe --version $version
 
-      - name: Upload EXE as workflow artifact
+      - name: Upload smoke logs on failure
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: SpeechCraft-Windows-Full
-          path: dist/SpeechCraft_Studio.exe
-          retention-days: 30
+          name: installer-smoke-logs
+          path: build/installer-smoke/
+          if-no-files-found: ignore
+
+      - name: Checksums
+        shell: pwsh
+        run: |
+          $files = @("dist/SpeechCraft_Studio.exe", "build/nsis-out/SpeechCraft_Studio_Setup.exe")
+          foreach ($f in $files) {
+            $h = (Get-FileHash $f -Algorithm SHA256).Hash.ToLower()
+            $out = "$f.sha256"
+            # Format matches `sha256sum -c`: lowercase hex, two spaces, basename, no line terminator.
+            [IO.File]::WriteAllText($out, "$h  $(Split-Path $f -Leaf)")
+            Write-Output "$h  $(Split-Path $f -Leaf)"
+          }
+
+      - name: Attach to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --generate-notes --title "SpeechCraft Studio ${TAG#v}"
+          gh release upload "$TAG" \
+            dist/SpeechCraft_Studio.exe dist/SpeechCraft_Studio.exe.sha256 \
+            build/nsis-out/SpeechCraft_Studio_Setup.exe build/nsis-out/SpeechCraft_Studio_Setup.exe.sha256 \
+            --clobber

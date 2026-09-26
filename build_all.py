@@ -19,6 +19,7 @@ Output:
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import subprocess
 import sys
@@ -30,6 +31,21 @@ STAGING = ROOT / "build" / "staging"
 
 SPEC = "SpeechCraft_Studio.spec"
 EXE_NAME = "SpeechCraft_Studio"
+
+
+def app_version() -> str:
+    """Read the app version from audio_editor.py's __version__.
+
+    Single source of truth: the same string feeds the EXE metadata,
+    the NSIS version resource, and Add/Remove Programs. v1.3.6 kept
+    five hand-maintained copies that had already drifted out of sync
+    (the NSIS literal even carried an invalid 5-segment version).
+    """
+    source = (ROOT / "audio_editor.py").read_text(encoding="utf-8")
+    match = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', source, re.MULTILINE)
+    if not match:
+        sys.exit("Could not find __version__ in audio_editor.py")
+    return match.group(1)
 
 
 def build_one(spec: str, name: str) -> Path:
@@ -63,13 +79,20 @@ def build_one(spec: str, name: str) -> Path:
 def stage_for_installer(exe: Path) -> Path:
     """Copy the EXE + bundled docs into a staging dir for NSIS.
 
-    Returns the staging dir.
+    Returns the staging dir. v1.3.7: the installer reads EVERYTHING
+    from this folder (the .nsi's File lines point at ${STAGING}), so
+    the ReadMe.txt the Finish page offers must be staged here too —
+    v1.3.6 had the .nsi reach into the CWD for it while the build
+    script was already passing an unused /DSTAGING argument.
     """
     if STAGING.exists():
         shutil.rmtree(STAGING)
     STAGING.mkdir(parents=True)
 
     shutil.copy2(exe, STAGING / f"{EXE_NAME}.exe")
+    readme = ROOT / "installer" / "ReadMe.txt"
+    if readme.exists():
+        shutil.copy2(readme, STAGING / "ReadMe.txt")
     for name in ("README.md", "LICENSE", "CHANGELOG.md"):
         src = ROOT / name
         if src.exists():
@@ -79,11 +102,14 @@ def stage_for_installer(exe: Path) -> Path:
     return STAGING
 
 
-def build_nsis_installer(staging: Path) -> Path:
+def build_nsis_installer(staging: Path, version: str) -> Path:
     """Run makensis to pack the staging dir into a single Setup.exe.
 
     Requires NSIS to be installed and on PATH (or accessible via
-    ``C:/Program Files (x86)/NSIS/makensis.exe``).
+    ``C:/Program Files (x86)/NSIS/makensis.exe``). v1.3.7 passes the
+    app version (the .nsi hard-errors without it, so a drifted
+    version can never ship again) and the output dir (the v1.3.6
+    script hardcoded an absolute user-profile path).
     """
     makensis = _find_makensis()
     if not makensis:
@@ -96,9 +122,17 @@ def build_nsis_installer(staging: Path) -> Path:
     if not installer_script.exists():
         sys.exit(f"NSIS script missing: {installer_script}")
 
+    staged_exe = staging / f"{EXE_NAME}.exe"
+    staged_readme = staging / "ReadMe.txt"
+    for required in (staged_exe, staged_readme):
+        if not required.exists():
+            sys.exit(f"Staging incomplete: {required} is missing (run stage_for_installer first)")
+
     cmd = [
         str(makensis),
+        "/DAPP_VERSION=" + version,
         "/DSTAGING=" + str(staging),
+        "/DOUT_DIR=" + str(DIST),
         str(installer_script),
     ]
     print(f"  $ {' '.join(cmd)}")
@@ -144,11 +178,13 @@ def main() -> int:
     args = parser.parse_args()
 
     DIST.mkdir(exist_ok=True)
+    version = app_version()
+    print(f"Building SpeechCraft Studio v{version}")
     exe = build_one(SPEC, EXE_NAME)
 
     if not args.skip_installer:
         staging = stage_for_installer(exe)
-        setup = build_nsis_installer(staging)
+        setup = build_nsis_installer(staging, version)
         print(f"\n=== Done ===\n  EXE:    {exe}\n  Setup:  {setup}")
     else:
         print(f"\n=== Done ===\n  EXE:    {exe}")

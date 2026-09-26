@@ -62,18 +62,29 @@ def test_page_change_updates_status_text(wx_app, tmp_path):
 
 @needs_wx
 def test_focus_lands_on_page_heading(wx_app, tmp_path):
-    """After navigation, focus is on the page's heading so NVDA
-    reads the page title on the focus change."""
+    """After navigation, focus is on the page's first interactive control
+    so NVDA reads something actionable on the focus change.
+
+    v1.3.7 update: v1.3.3 landed focus on the page heading (a
+    StaticText), which wxMSW accepts as a silent no-op — NVDA never
+    announced it. The contract is now "first shown, enabled control";
+    this test pins that the target accepts focus for real."""
+    import wx
+
     dlg = _open_wizard(tmp_path)
     try:
         dlg._notebook.SetSelection(1)
         focused = dlg._focus_page_content()
-        assert focused is dlg._editing._heading
-        assert focused.GetName() == "Editing features, heading"
+        assert focused is not None
+        assert focused.AcceptsFocus()
+        assert not isinstance(focused, wx.StaticText)
 
         dlg._notebook.SetSelection(5)  # -> Summary
         focused = dlg._focus_page_content()
-        assert focused is dlg._summary._heading
+        # The Summary page has no interactive control (the Finish
+        # button lives on the dialog's nav bar). v1.3.7's contract:
+        # return None there instead of silently focusing a StaticText.
+        assert focused is None
     finally:
         dlg.Destroy()
 

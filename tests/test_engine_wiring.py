@@ -150,11 +150,11 @@ def test_piper_engine_find_piper_prefers_feature_manager(tmp_path, monkeypatch):
         feature_manager, "is_ready",
         lambda *a, **kw: True,
     )
-    # Make DEFAULT_STATE_FILE.parent == tmp_path so the exe path resolves
-    # to our planted file.
-    class _FakeStateFile:
-        parent = tmp_path
-    monkeypatch.setattr(feature_manager, "DEFAULT_STATE_FILE", _FakeStateFile())
+    # v1.3.7: the engine reads feature_manager.ASSETS_ROOT (which used
+    # to be derived from DEFAULT_STATE_FILE.parent); point it at the
+    # feature_assets tree inside tmp where the fake piper.exe is
+    # planted.
+    monkeypatch.setattr(feature_manager, "ASSETS_ROOT", tmp_path / "feature_assets")
 
     engine = piper_tts_engine.PiperTTSEngine.__new__(
         piper_tts_engine.PiperTTSEngine

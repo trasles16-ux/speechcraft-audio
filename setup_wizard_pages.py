@@ -35,6 +35,63 @@ from feature_flags import (
 )
 
 
+def first_focusable_child(win: wx.Window | None) -> wx.Window | None:
+    """Depth-first search for the first interactive child control.
+
+    Used by the wizard to land keyboard focus on a real interactive
+    control when the user arrives on a page.
+
+    Only real ``wx.Control`` widgets qualify (button, checkbox,
+    textctrl…), minus StaticText and Gauge which are wx.Controls that
+    accept SetFocus() on wxMSW without error yet never actually move
+    keyboard focus — the silent no-op that made the v1.3.6 wizard
+    announce nothing on page changes. Container windows (Panel,
+    ScrolledWindow) also report AcceptsFocus() == True but announce
+    as a bare "panel", so they are skipped too.
+    """
+    if win is None or not win.IsShown() or not win.IsEnabled():
+        return None
+    if (
+        isinstance(win, wx.Control)
+        and not isinstance(win, (wx.StaticText, wx.Gauge))
+        and win.AcceptsFocus()
+    ):
+        return win
+    for child in win.GetChildren():
+        found = first_focusable_child(child)
+        if found is not None:
+            return found
+    return None
+
+
+def _announce_to_top_level(win: wx.Window, text: str) -> None:
+    """Best-effort UIA announcement on the wizard's top-level window.
+
+    Screen readers hear this without focus moving (Windows 10 1703+).
+    Visible text always remains — this channel only adds speech.
+    """
+    try:
+        from a11y_notify import announce_window
+        announce_window(wx.GetTopLevelParent(win), text, dedupe=False)
+    except Exception:
+        pass
+
+
+def _row_display_name(feature: str, asset_name: str) -> str:
+    """Human-readable name for a download row (NVDA reads this verbatim).
+
+    v1.3.6 announced rows as "piper_tts/en_GB.cori" — internal key
+    names with slashes, meaningless spoken aloud. The asset's wizard
+    description ("English (Great Britain) — Cori, female, medium
+    quality (60 MB)") is what sighted users already see.
+    """
+    try:
+        from feature_manager import get_asset
+        return get_asset(feature, asset_name).description or asset_name
+    except Exception:
+        return asset_name
+
+
 #: Page names, in wizard order. Exposed so :mod:`setup_wizard` can
 #: enumerate them without re-typing the list.
 PAGE_NAMES = (
@@ -68,7 +125,7 @@ TTS_PAGE_FEATURES = (
 )
 
 
-class _WizardPage(wx.Panel):
+class _WizardPage(wx.ScrolledWindow):
     """Base class for wizard pages.
 
     Subclasses should call ``super().__init__`` with a ``name`` (the
@@ -78,10 +135,19 @@ class _WizardPage(wx.Panel):
 
     The base class:
 
-    - Sets an accessible name on the panel so NVDA announces the
+    - Sets an accessible name on the page so NVDA announces the
       page title when focus arrives
     - Provides a consistent vertical padding
     - Provides a ``header_text`` static text the subclass populates
+
+    v1.3.7: pages are now scrolled windows. The wizard dialog is a
+    fixed, screen-reader-predictable size; a page whose content is
+    taller than the visible area (five feature rows plus their
+    descriptions, or several download rows) now scrolls instead of
+    clipping its bottom controls — previously the per-row Download
+    buttons on the Download page could sit below the dialog's bottom
+    edge, out of Tab reach and out of sight, which is exactly the
+    "I can't find the button to start the download" report.
     """
 
     def __init__(self, parent: wx.Window, *, name: str) -> None:
@@ -90,7 +156,13 @@ class _WizardPage(wx.Panel):
         self.SetName(name)
         self._sizer = wx.BoxSizer(wx.VERTICAL)
         self.SetSizer(self._sizer)
+        self.SetScrollRate(20, 20)
         self._build_ui()
+        # FitInside sets the virtual (scrollable) size from the sizer,
+        # so scrollbars appear whenever the visible page is smaller
+        # than the content. Re-called by DownloadPage.refresh() when
+        # its row list is rebuilt dynamically.
+        self.FitInside()
 
     @property
     def name(self) -> str:
@@ -240,7 +312,16 @@ class EditingFeaturesPage(_WizardPage):
             label.SetLabel("Status: " + status)
             # v1.3.6: re-call SetName so NVDA re-announces the status
             # change when focus lands back on the row.
-            label.SetName(f"{_humanize(name)} status: {status}")
+            accessible = f"{_humanize(name)} status: {status}."
+            if status == _STATUS_LABELS["needs_download"]:
+                # v1.3.7: tell the user where the download button is —
+                # this is the exact confusion reported with v1.3.6.
+                accessible += (
+                    " Continue to the Download page to install it now,"
+                    " or just use the feature and SpeechCraft will offer"
+                    " to download what it needs."
+                )
+            label.SetName(accessible)
 
 
 class TTSEnginesPage(_WizardPage):
@@ -316,7 +397,14 @@ class TTSEnginesPage(_WizardPage):
             label.SetLabel("Status: " + status)
             # v1.3.6: re-call SetName so NVDA re-announces the status
             # change when focus lands back on the row.
-            label.SetName(f"{_humanize(name)} status: {status}")
+            accessible = f"{_humanize(name)} status: {status}."
+            if status == _STATUS_LABELS["needs_download"]:
+                accessible += (
+                    " Continue to the Download page to install it now,"
+                    " or just use the feature and SpeechCraft will offer"
+                    " to download what it needs."
+                )
+            label.SetName(accessible)
 
 
 class DownloadPage(_WizardPage):
@@ -437,6 +525,11 @@ class DownloadPage(_WizardPage):
 
         holder_sizer.Layout()
         self.Layout()
+        # v1.3.7: the page is a scrolled window now — update its
+        # virtual size after the row list changes so the per-row
+        # Download buttons are always reachable by scrolling, never
+        # clipped out of Tab order.
+        self.FitInside()
 
     def _build_ui(self) -> None:
         from feature_toggling import build_gates, gates_to_download_list
@@ -485,30 +578,35 @@ class DownloadPage(_WizardPage):
         )
 
         asset = get_asset(feature, asset_name)
+        display = asset.description or asset.key
         row_sizer = wx.BoxSizer(wx.VERTICAL)
 
-        desc = wx.StaticText(holder, label=asset.description or asset.key)
-        desc.SetName(f"{asset.key} description")
+        desc = wx.StaticText(holder, label=display)
+        desc.SetName(display)
         row_sizer.Add(desc, 0, wx.LEFT | wx.RIGHT | wx.TOP, 8)
 
         hz = wx.BoxSizer(wx.HORIZONTAL)
         gauge = wx.Gauge(holder, range=100, size=(200, 20))
-        gauge.SetName(f"{asset.key} download progress")
+        gauge.SetName(f"{display} download progress")
         hz.Add(gauge, 0, wx.RIGHT, 8)
 
         status = wx.StaticText(holder, label="Not downloaded")
-        status.SetName(f"{asset.key} status")
+        status.SetName(f"{display} status: not downloaded")
         hz.Add(status, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
 
         btn = wx.Button(holder, wx.ID_ANY, "Download")
-        btn.SetName(f"Download {asset.key}")
+        # v1.3.7: humanized name. v1.3.6 named these buttons with the
+        # internal key ("Download piper_tts/en_GB.cori"), which NVDA
+        # read as gibberish and which made the buttons nearly
+        # impossible to find in the object list.
+        btn.SetName(f"Download {display}")
         if not is_downloadable(feature, asset_name):
             btn.Disable()
         hz.Add(btn, 0)
         row_sizer.Add(hz, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
         cancel = wx.Button(holder, wx.ID_ANY, "Cancel")
-        cancel.SetName(f"Cancel download of {asset.key}")
+        cancel.SetName(f"Cancel download of {display}")
         cancel.Hide()
         cancel.Bind(
             wx.EVT_BUTTON,
@@ -549,15 +647,27 @@ class DownloadPage(_WizardPage):
 
     def _start_download(self, row: dict) -> None:
         from feature_manager import FeatureDownloadError, download_asset
-        from prefs import PREFS_DIR
 
+        # v1.3.7: no dest_dir argument — download_asset now defaults to
+        # feature_manager.ASSETS_ROOT (PREFS_DIR/feature_assets), the
+        # same tree the engines and the lazy-install prompt read.
+        # v1.3.6 passed PREFS_DIR/"models" here, so wizard-downloaded
+        # assets were invisible to the engines and everything
+        # downloaded twice.
         feature = row["feature"]
         asset = row["asset"]
         cancel_event = row["cancel_event"]
+        display = _row_display_name(feature, asset)
         row["button"].Disable()
         row["cancel"].Show()
         row["status"].SetLabel("Starting download…")
+        row["status"].SetName(f"{display} status: starting download")
         row["gauge"].SetValue(0)
+        # v1.3.7: the dialog carries no NVDA-readable status bar, so
+        # download state rides the UIA notification channel. Without
+        # this, a screen-reader user who pressed Download heard
+        # nothing until the row's label changed under focus (if ever).
+        _announce_to_top_level(self, f"Downloading {display}")
 
         def _progress(asset_key: str, done: int, total: int) -> None:
             if total > 0:
@@ -565,30 +675,72 @@ class DownloadPage(_WizardPage):
                 wx.CallAfter(row["gauge"].SetValue, min(pct, 100))
                 label = f"Downloading… ({done // (1024 * 1024)} of {total // (1024 * 1024)} MB)"
                 wx.CallAfter(row["status"].SetLabel, label)
+                wx.CallAfter(
+                    row["status"].SetName,
+                    f"{display} status: downloading, {pct} percent",
+                )
 
         def _worker() -> None:
             try:
                 download_asset(
                     feature,
                     asset,
-                    dest_dir=PREFS_DIR / "models",
                     progress_cb=_progress,
                     cancel_check=cancel_event.is_set,
                     state_file=self._state_file,
                 )
-                wx.CallAfter(row["button"].SetLabel, "Ready")
-                wx.CallAfter(row["status"].SetLabel, "Downloaded and verified.")
-                wx.CallAfter(row["gauge"].SetValue, 100)
+                wx.CallAfter(self._on_row_success, feature, asset)
             except FeatureDownloadError as exc:
                 wx.CallAfter(row["button"].Enable)
                 wx.CallAfter(row["button"].SetLabel, "Retry")
+                wx.CallAfter(row["button"].SetName, f"Retry download of {display}")
                 wx.CallAfter(row["status"].SetLabel, f"Failed: {exc.reason}")
+                wx.CallAfter(
+                    row["status"].SetName, f"{display} download failed: {exc.reason}"
+                )
+                wx.CallAfter(
+                    _announce_to_top_level, self, f"Download of {display} failed. {exc.reason}"
+                )
             finally:
                 wx.CallAfter(row["cancel"].Hide)
 
         worker = threading.Thread(target=_worker, daemon=True)
         worker.start()
         self._workers.append(worker)
+
+    def _on_row_success(self, feature: str, asset_name: str) -> None:
+        """Update one row after a successful download (UI thread).
+
+        Marks the row Ready, then refreshes the feature-page status
+        rows so "Needs download" becomes "Ready" the moment the user
+        navigates back — and announces the completion so the user
+        knows the feature is usable right now.
+        """
+        display = _row_display_name(feature, asset_name)
+        for row in self._rows:
+            if row["feature"] == feature and row["asset"] == asset_name:
+                row["button"].SetLabel("Ready")
+                row["button"].SetName(f"{display} is ready")
+                row["status"].SetLabel("Downloaded and verified.")
+                row["status"].SetName(f"{display} status: downloaded and verified")
+                row["gauge"].SetValue(100)
+                break
+        _announce_to_top_level(
+            self,
+            f"{display} downloaded and verified. You can use the feature now.",
+        )
+        # The Editing / TTS pages cache their status labels; refresh
+        # them so they no longer say "Needs download".
+        try:
+            parent_notebook = self.GetParent()
+            if parent_notebook is not None:
+                for idx in range(parent_notebook.GetPageCount()):
+                    page = parent_notebook.GetPage(idx)
+                    refresh = getattr(page, "_refresh_status", None)
+                    if refresh is not None:
+                        refresh()
+        except Exception:
+            pass
 
     def _cancel_row(self, feature: str, asset_name: str, event: wx.Event | None = None) -> None:
         for row in self._rows:

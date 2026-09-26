@@ -890,7 +890,6 @@ def _log_launch_attempt(msg: str) -> None:
             fh.write(f"[{_time.strftime('%H:%M:%S')}] {msg}\n")
     except Exception:
         pass
-    return proc
 
 
 def _launch_installer_elevated(

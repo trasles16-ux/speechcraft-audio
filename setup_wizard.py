@@ -46,6 +46,7 @@ from typing import Any
 
 import wx
 
+from a11y_notify import announce_window
 from feature_flags import (
     FeatureFlags,
     is_wizard_completed,
@@ -62,6 +63,7 @@ from setup_wizard_pages import (
     SummaryPage,
     TTSEnginesPage,
     WelcomePage,
+    first_focusable_child,
 )
 
 
@@ -88,7 +90,11 @@ class SetupWizardDialog(wx.Dialog):
             wx.ID_ANY,
             _WIZARD_TITLE,
             style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
-            size=(640, 540),
+            # v1.3.7: taller default. Six pages of checkbox + description
+            # + status rows overflow 540px; the pages scroll now, but a
+            # taller default keeps the common case (feature pages, one
+            # or two download rows) fully visible with no scrolling.
+            size=(660, 640),
         )
         self.SetName("Personalise SpeechCraft setup wizard")
         self._prefs_file = prefs_file if prefs_file is not None else PREFS_FILE
@@ -112,13 +118,11 @@ class SetupWizardDialog(wx.Dialog):
         panel = wx.Panel(self)
         panel.SetBackgroundColour(wx.Colour(248, 246, 240))
 
-        # NVDA announcement channel: screen readers watch the status
-        # bar of the focused window and read text changes without
-        # focus being stolen. Page changes set the status text so a
-        # keyboard/NVDA user always hears "Page N of M: <page>" when
-        # navigating Next/Back. Parented to the panel and placed by
-        # the panel sizer so it actually renders (wx.Dialog has no
-        # CreateStatusBar — that's a Frame API).
+        # NVDA announcement channel: page changes are raised as UIA
+        # notifications (see _refresh_indicator) because NVDA does not
+        # read status bars inside dialogs. The visible text remains for
+        # sighted users and for screen readers that do announce
+        # in-dialog status bars.
         self._status = wx.StatusBar(panel)
         self._status.SetName("Wizard status")
 
@@ -140,10 +144,19 @@ class SetupWizardDialog(wx.Dialog):
         self._welcome = WelcomePage(self._notebook)
         self._editing = EditingFeaturesPage(self._notebook, flags=self._flags)
         self._tts = TTSEnginesPage(self._notebook, flags=self._flags)
+        # v1.3.7 fix: the Download page must read/write the ASSET state
+        # file (feature_state.json, what download_asset records), not
+        # setup.json (which holds the user's flag choices). v1.3.6
+        # passed the prefs file here, so the wizard's "what's already
+        # installed?" picture disagreed with every engine and the
+        # lazy-install prompt, and downloaded assets were re-offered
+        # (or wrongly hidden) on the next wizard visit. Derived from
+        # the prefs file's folder so tests that redirect prefs to
+        # tmp_path get an isolated state file for free.
         self._download = DownloadPage(
             self._notebook,
             flags_provider=self._current_flags,
-            state_file=self._prefs_file,
+            state_file=self._prefs_file.with_name("feature_state.json"),
         )
         self._data = DataLocationPage(
             self._notebook,
@@ -197,6 +210,12 @@ class SetupWizardDialog(wx.Dialog):
 
         outer.Add(nav, 0, wx.EXPAND | wx.ALL, 12)
 
+        # v1.3.7: the status bar is kept for the visible "Page N of M"
+        # text, but it is NOT an announcement channel — NVDA does not
+        # read status bars inside dialogs (proven live; it reads frame
+        # status bars). Page changes are announced through the UIA
+        # notification channel instead (see _refresh_indicator).
+
         # Status bar renders last (bottom edge) and carries the NVDA
         # page-announcement text.
         outer.Add(self._status, 0, wx.EXPAND)
@@ -248,8 +267,12 @@ class SetupWizardDialog(wx.Dialog):
             refresh = getattr(current, "_refresh_status", None)
             if refresh is not None:
                 refresh()
-        # NVDA: land focus on the new page's heading so the screen
-        # reader announces the page the user just arrived at.
+        # NVDA: land focus on the first interactive control of the new
+        # page (a checkbox, or the Download-all button on the download
+        # page) so the screen reader announces both where you are and
+        # what you can act on. v1.3.6 focused the page heading — a
+        # StaticText, which wxMSW accepts but never actually focuses,
+        # so page changes were silent.
         self._focus_page_content()
         event.Skip()
 
@@ -342,34 +365,42 @@ class SetupWizardDialog(wx.Dialog):
         page_name = self._notebook.GetPageText(idx)
         self._indicator.SetLabel(f"Page {idx + 1} of {total} — {page_name}")
         self._indicator.SetName(f"Page {idx + 1} of {total}: {page_name}")
-        # Screen-reader announcement: NVDA reads status-bar changes on
-        # the focused window without stealing focus from the tab strip,
-        # so the user always hears which page they've landed on.
-        self._status.SetStatusText(f"Page {idx + 1} of {total}: {page_name}")
+        status_text = f"Page {idx + 1} of {total}: {page_name}"
+        # Visible channel (sighted users, and screen readers that do
+        # read in-dialog status bars).
+        self._status.SetStatusText(status_text)
+        # Speech channel: UIA notification raised on this dialog.
+        # NVDA/JAWS/Narrator speak it without focus moving. v1.3.6
+        # relied on the in-dialog status bar alone, which NVDA never
+        # announced — page changes were silent.
+        announce_window(self, status_text)
 
     def _focus_page_content(self):
-        """Move focus to the first meaningful control on the page.
+        """Move focus to the first interactive control on the page.
 
         NVDA announces the focused control on focus-change, so landing
-        focus on the page heading makes the screen reader read the
-        page title when the user navigates Next/Back. Returns the
-        focused widget (or None) so callers/tests can verify the
-        target.
+        focus on a real widget (the first checkbox, or the Download
+        button) makes the screen reader read something actionable when
+        the user navigates Next/Back. Returns the focused widget (or
+        None) so callers/tests can verify the target.
+
+        v1.3.7 fix: v1.3.6 focused the page heading (a StaticText).
+        wxMSW accepts SetFocus() on StaticTexts without raising, but no
+        focus actually moves, so the announcement never happened. The
+        helper walks the page for the first shown, enabled control that
+        accepts focus, skipping StaticText and Gauge explicitly.
         """
         page = self._current_page()
         if page is None:
             return None
-        heading = getattr(page, "_heading", None)
-        if heading is not None and heading.IsShown():
-            heading.SetFocus()
-            return heading
-        # No dedicated heading (e.g. Download page list panel) —
-        # focus the first child so NVDA reads something meaningful.
-        children = page.GetChildren()
-        if children:
-            children[0].SetFocus()
-            return children[0]
-        return None
+        target = first_focusable_child(page)
+        if target is not None:
+            target.SetFocus()
+        # Pages with no interactive control (Summary) keep focus where
+        # the notebook left it; the UIA page announcement still fires.
+        # v1.3.6's fallback focused the heading StaticText, which is a
+        # silent no-op on wxMSW.
+        return target
 
     def _refresh_nav_buttons(self) -> None:
         idx = self._notebook.GetSelection()

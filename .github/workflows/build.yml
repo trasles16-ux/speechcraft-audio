@@ -17,8 +17,38 @@ jobs:
         run: pip install -r requirements.txt pyinstaller
       - name: Build
         run: pyinstaller SpeechCraft_Studio.spec --noconfirm
+      - name: Stage for NSIS
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build/staging | Out-Null
+          Copy-Item dist/SpeechCraft_Studio.exe build/staging/
+          Copy-Item installer/ReadMe.txt build/staging/ReadMe.txt
+      - name: Compile NSIS installer (validation)
+        shell: pwsh
+        run: |
+          $makensis = "tools/nsis/nsis-3.10/Bin/makensis.exe"
+          $version = (Select-String -Path audio_editor.py -Pattern '__version__ = "([^"]+)"').Matches[0].Groups[1].Value
+          Write-Host "Validating installer for v$version"
+          New-Item -ItemType Directory -Force -Path build/nsis-out | Out-Null
+          & $makensis /DAPP_VERSION=$version /DSTAGING="$(Resolve-Path build/staging)" /DOUT_DIR="$(Resolve-Path build/nsis-out)" installer/speechcraft_setup.nsi
+          if ($LASTEXITCODE -ne 0) { Write-Error "NSIS compile failed"; exit 1 }
+          Get-Item build/nsis-out/SpeechCraft_Studio_Setup.exe | ForEach-Object { Write-Host "Setup.exe built: $([math]::Round($_.Length/1MB,1)) MB" }
+      - name: Installer smoke test (silent install, verify, uninstall)
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path audio_editor.py -Pattern '__version__ = "([^"]+)"').Matches[0].Groups[1].Value
+          python scripts/installer_smoke.py --setup build/nsis-out/SpeechCraft_Studio_Setup.exe --version $version
+      - name: Upload smoke logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-smoke-logs
+          path: build/installer-smoke/
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
           name: SpeechCraft-Windows
-          path: dist/*.exe
+          path: |
+            dist/*.exe
+            build/nsis-out/*.exe
           retention-days: 30

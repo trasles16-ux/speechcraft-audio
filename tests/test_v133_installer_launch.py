@@ -29,6 +29,16 @@ def _make_proc(poll_result: object) -> mock.Mock:
 
 
 def test_launch_installer_converts_spawn_oserror() -> None:
+    """Popen failure falls back to the UAC path; when that also fails
+    the user gets one actionable message with the manual path.
+
+    v1.3.7: ShellExecuteExW itself is mocked — with the old
+    ``_log_launch_attempt`` NameError fixed, this test really reached
+    the OS UAC prompt (a live elevation dialog during pytest). The
+    mock pins the failure branch of ``_launch_installer_elevated``.
+    """
+    import ctypes
+
     from updater import UpdateCheckError, launch_installer
 
     import tempfile, os
@@ -37,32 +47,65 @@ def test_launch_installer_converts_spawn_oserror() -> None:
     try:
         with mock.patch("updater.subprocess.Popen",
                         side_effect=OSError("WinError 740: The process "
-                                            "cannot access the file")):
+                                            "cannot access the file")), \
+             mock.patch.object(ctypes.windll.shell32, "ShellExecuteExW",
+                               create=True, return_value=0):
             with pytest.raises(UpdateCheckError) as exc_info:
                 launch_installer(path)
         msg = str(exc_info.value)
-        assert "Run as administrator" in msg or "remote session" in msg
+        # v1.3.7: the fallback's failure branch is what now surfaces
+        # (the old NameError killed the flow before any message).
+        assert "UAC prompts may not be available" in msg
         # The actionable manual path is surfaced
+        assert "run the installer manually" in msg
         assert path in msg
     finally:
         os.unlink(path)
 
 
 def test_launch_installer_catches_immediate_exit() -> None:
+    """An installer that exits immediately (SmartScreen / AV block)
+    surfaces as UpdateCheckError instead of a silent fail.
+
+    v1.3.7: the elevated-spawn result is mocked at the ctypes boundary
+    (ShellExecuteExW succeeds, GetExitCodeProcess reports code 1) so
+    no real process is started and no UAC dialog appears.
+    """
+    import ctypes
+
     from updater import UpdateCheckError, launch_installer
 
     import tempfile, os
     with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as f:
         path = f.name
     try:
-        proc = _make_proc(poll_result=1)  # exited immediately, code 1
-        with mock.patch("updater.subprocess.Popen", return_value=proc), \
+        def _fake_get_exit_code(hProcess, code_ref):
+            code_ref._obj.value = 1  # exited with code 1
+            return 1  # TRUE: the call succeeded
+
+        with mock.patch("updater.subprocess.Popen",
+                        side_effect=OSError("WinError 740: blocked")), \
+             mock.patch.object(ctypes.windll.shell32, "ShellExecuteExW",
+                               create=True, return_value=1), \
+             mock.patch.object(ctypes.windll.kernel32, "GetExitCodeProcess",
+                               create=True, side_effect=_fake_get_exit_code), \
              mock.patch("time.sleep"):
             with pytest.raises(UpdateCheckError) as exc_info:
                 launch_installer(path)
         assert "SmartScreen" in str(exc_info.value) or "Antivirus" in str(exc_info.value)
     finally:
         os.unlink(path)
+
+
+def test_log_launch_attempt_never_raises() -> None:
+    """v1.3.7 regression: _log_launch_attempt ended with a stray
+    ``return proc`` for a name that never existed in its scope, so
+    every installer-launch failure log raised NameError and broke the
+    fallback chain before the user ever saw an error dialog."""
+    from updater import _log_launch_attempt
+
+    # Must not raise (it appends to %LOCALAPPDATA%\SpeechCraft\update.log).
+    _log_launch_attempt("pytest: log channel smoke test")
 
 
 def test_launch_installer_returns_handle_on_success() -> None:

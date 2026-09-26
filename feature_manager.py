@@ -216,6 +216,18 @@ def total_asset_bytes(feature: str, asset_name: str) -> int:
 #: Default location: ``PREFS_DIR/feature_state.json``
 DEFAULT_STATE_FILE: Final = PREFS_DIR / "feature_state.json"
 
+#: Root of every downloaded feature asset: ``PREFS_DIR/feature_assets``.
+#: This is the single download destination for the whole app — the
+#: wizard's Download page, the lazy-install prompt, and every engine
+#: lookup (piper.exe discovery, Whisper model dir) all resolve under
+#: here. v1.3.6 had three different destinations (``PREFS_DIR/models``
+#: from the wizard, CWD from lazy_install, this folder from the Piper
+#: engine), so the wizard's download and the engine's lookup could
+#: never agree and downloads ran twice or failed to be found.
+#: The NSIS uninstaller already removes ``$APPDATA\SpeechCraft\
+#: feature_assets``, so uninstall hygiene matches too.
+ASSETS_ROOT: Final = DEFAULT_STATE_FILE.parent / "feature_assets"
+
 
 def _empty_state_entry() -> dict[str, Any]:
     return {"ready": False, "paths": {}, "downloaded_at": None, "last_error": None}
@@ -388,6 +400,9 @@ def download_asset(
 ) -> dict:
     """Download all files in one asset into ``dest_dir``.
 
+    ``dest_dir`` defaults to :data:`ASSETS_ROOT` — the shared location
+    every consumer reads. Passing a custom value is only for tests.
+
     Each file is streamed to a ``.part`` file, SHA-256 verified, then
     atomically renamed. On success the state file is updated. On
     failure the ``.part`` is cleaned up and the state file records
@@ -401,14 +416,14 @@ def download_asset(
     Raises FeatureDownloadError on network failure, SHA mismatch, or cancel.
     """
     import time
-    from pathlib import Path as _Path
 
     raw = FEATURE_ASSETS[feature][asset_name]
     files = raw["files"]
     total_bytes = sum(f["size_bytes"] for f in files if f["size_bytes"] > 0)
     key = asset_key(feature, asset_name)
-    out_dir = _state_entry_path(feature, asset_name,
-                                dest_dir=dest_dir or _Path("."))
+    out_dir = _state_entry_path(
+        feature, asset_name, dest_dir=dest_dir if dest_dir is not None else ASSETS_ROOT
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
 
     bytes_done = 0
@@ -553,6 +568,12 @@ def ensure_ready(
     """Return True if the asset is ready (already on disk or just
     downloaded). False on cancel. Raises FeatureDownloadError on
     failure. Idempotent: calling it twice only downloads once.
+
+    ``dest_dir`` defaults to :data:`ASSETS_ROOT` so a caller that
+    passes nothing (lazy_install did) downloads into the shared
+    feature_assets tree instead of the process's current working
+    directory — which on an installed copy lives under
+    ``C:\\Program Files`` where a non-admin app cannot write.
     """
     if is_ready(feature, asset_name, state_file=state_file):
         return True
@@ -574,6 +595,7 @@ __all__ = (
     "FeatureAsset",
     "FeatureDownloadError",
     "DEFAULT_STATE_FILE",
+    "ASSETS_ROOT",
     "asset_key",
     "list_features",
     "list_assets",

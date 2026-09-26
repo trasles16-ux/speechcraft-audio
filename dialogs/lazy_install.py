@@ -181,6 +181,12 @@ def prompt_and_install(
         return False
 
     # User accepted — show progress + run worker.
+    # v1.3.7: no dest_dir is passed to ensure_ready — it now defaults
+    # to feature_manager.ASSETS_ROOT (PREFS_DIR/feature_assets), the
+    # shared tree the engines read. Previously no dest was given at
+    # all, which downloaded into the process's current working
+    # directory — inside C:\Program Files on installed copies, where a
+    # non-admin app cannot write, so the download silently failed.
     progress_dlg: list[DownloadProgressDialog | None] = [None]
     done_evt = threading.Event()
     outcome: list[tuple[bool, str | None]] = [(False, None)]

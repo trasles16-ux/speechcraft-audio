@@ -34,8 +34,12 @@ import feature_manager
 
 
 def _default_models_dir() -> Path:
-    """Where feature_manager installs Piper voices."""
-    return feature_manager.DEFAULT_STATE_FILE.parent / "feature_assets"
+    """Where feature_manager installs Piper voices.
+
+    v1.3.7: feature_manager.ASSETS_ROOT is the single download
+    destination for the whole app (wizard, lazy-install, engines).
+    """
+    return feature_manager.ASSETS_ROOT
 
 
 class PiperTTSEngine:
@@ -188,11 +192,10 @@ class PiperTTSEngine:
 
     def _find_piper(self) -> Optional[str]:
         # 1. Bundled / installed via feature_manager.
-        from feature_manager import is_ready, asset_key
+        from feature_manager import is_ready, ASSETS_ROOT
         if is_ready("piper_tts", "executable"):
             exe = (
-                feature_manager.DEFAULT_STATE_FILE.parent
-                / "feature_assets"
+                ASSETS_ROOT
                 / "piper_tts"
                 / "executable"
                 / "piper.exe"
