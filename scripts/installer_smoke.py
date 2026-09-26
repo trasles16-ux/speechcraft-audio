@@ -192,7 +192,11 @@ def verify_version_resource(setup: Path, version: str | None) -> None:
     ok = ctypes.windll.version.VerQueryValueW(
         data, "\\", ctypes.byref(value), ctypes.byref(length)
     )
-    check(bool(ok) and length.value >= 268, "VS_FIXEDFILEINFO present")
+    # VerQueryValueW's last out-param is the BYTE SIZE of the returned
+    # block, not a field count - VS_FIXEDFILEINFO is 52 bytes (13 DWORDs).
+    # Found live: a bogus >= 268 threshold failed every good install on
+    # CI even though Windows returned the info correctly.
+    check(bool(ok) and length.value >= 52, "VS_FIXEDFILEINFO present")
 
     class VS_FIXEDFILEINFO(ctypes.Structure):
         _fields_ = [
