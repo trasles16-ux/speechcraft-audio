@@ -18,6 +18,11 @@ behind. Root causes:
    announcement, NVDA silence, user thinks a11y regressed.
 
 Run: .venv/Scripts/python.exe -m pytest tests/test_v138_piper_zip_fix.py -v
+
+v1.3.9 additions: the zip carries piper.exe's WHOLE runtime (DLLs +
+espeak-ng-data) and is extracted as a tree; is_ready() and _find_piper()
+reject an exe without espeak-ng.dll/espeak-ng-data beside it so v1.3.8
+installs self-heal on the next Piper download.
 """
 from __future__ import annotations
 
@@ -60,7 +65,6 @@ def test_extract_from_truncated_zip_no_nameerror(tmp_path):
     with pytest.raises(OSError, match="truncated or corrupt"):
         feature_manager._extract_from_zip(
             str(zip_path),
-            entry_name="piper/piper.exe",
             out_dir=tmp_path / "out",
         )
 
@@ -77,7 +81,6 @@ def test_extract_failure_deletes_bad_zip_and_leaves_no_partial(tmp_path):
     with pytest.raises(OSError):
         feature_manager._extract_from_zip(
             str(zip_path),
-            entry_name="piper/piper.exe",
             out_dir=tmp_path / "out",
         )
     assert not zip_path.exists(), "bad zip must be deleted"
@@ -99,13 +102,13 @@ def test_extract_same_name_as_zip_does_not_truncate_input(tmp_path):
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED) as zf:
         zf.writestr("piper/piper.exe", payload)
 
-    out = feature_manager._extract_from_zip(
+    extracted = feature_manager._extract_from_zip(
         str(zip_path),
-        entry_name="piper/piper.exe",
         out_dir=tmp_path,  # same dir -> same path as the zip itself
+        strip_prefix="piper",
     )
-    assert out == zip_path
-    assert out.read_bytes() == payload
+    assert extracted == [zip_path]
+    assert zip_path.read_bytes() == payload
 
 
 def test_extract_bad_zipfile_raises_clean_oserror(tmp_path):
@@ -115,7 +118,6 @@ def test_extract_bad_zipfile_raises_clean_oserror(tmp_path):
     with pytest.raises(OSError, match="truncated or corrupt"):
         feature_manager._extract_from_zip(
             str(bad),
-            entry_name="piper/piper.exe",
             out_dir=tmp_path / "out",
         )
 
@@ -222,9 +224,13 @@ def test_download_asset_zip_asset_happy_path(tmp_path, monkeypatch):
     import shutil
 
     payload = b"GOOD-PIPER-EXE" * 100
+    dll_payload = b"FAKE-ESPEAK-NG-DLL" * 50
+    data_payload = b"PHONEME-DICT" * 40
     zip_src = tmp_path / "good.zip"
     with zipfile.ZipFile(zip_src, "w", zipfile.ZIP_STORED) as zf:
         zf.writestr("piper/piper.exe", payload)
+        zf.writestr("piper/espeak-ng.dll", dll_payload)
+        zf.writestr("piper/espeak-ng-data/en_dict", data_payload)
 
     from updater import sha256_of_file
 
@@ -254,14 +260,31 @@ def test_download_asset_zip_asset_happy_path(tmp_path, monkeypatch):
         dest_dir=assets,
         state_file=tmp_path / "feature_state.json",
     )
-    exe = assets / "piper_tts" / "executable" / "piper.exe"
-    assert exe.read_bytes() == payload
-    # The throw-away zip is deleted; only the extracted binary remains.
-    assert sorted(p.name for p in exe.parent.iterdir()) == ["piper.exe"]
+    out_dir = assets / "piper_tts" / "executable"
+    assert (out_dir / "piper.exe").read_bytes() == payload
+    assert (out_dir / "espeak-ng.dll").read_bytes() == dll_payload
+    assert (
+        out_dir / "espeak-ng-data" / "en_dict"
+    ).read_bytes() == data_payload
+    # The zip lived AT out_dir/piper.exe (asset name == entry name) —
+    # the extracted binary replaced it in place after the zip closed.
+    assert sorted(p.name for p in out_dir.iterdir()) == [
+        "espeak-ng-data",
+        "espeak-ng.dll",
+        "piper.exe",
+    ]
     state = feature_manager.load_feature_state(
         state_file=tmp_path / "feature_state.json"
     )
     assert state["piper_tts/executable"]["ready"] is True
+    # Every extracted runtime file is recorded so is_ready() can
+    # detect an incomplete install later (v1.3.9 self-heal).
+    paths = state["piper_tts/executable"]["paths"]
+    assert set(paths) == {
+        "piper.exe",
+        "espeak-ng.dll",
+        "espeak-ng-data/en_dict",
+    }
 
 
 @needs_wx
@@ -286,6 +309,75 @@ def test_engine_ignores_zero_byte_piper_exe(wx_app, tmp_path, monkeypatch):
     engine._parent = None
     engine._allow_prompt = False
     assert engine._find_piper() is None
+
+
+def test_is_ready_rejects_piper_runtime_without_espeak_dll(tmp_path):
+    """v1.3.9 self-heal: state says ready and piper.exe exists, but the
+    v1.3.8 install recorded no espeak-ng.dll → is_ready must report
+    not-ready so the lazy-install flow re-downloads the full runtime
+    (the v1.3.8 install could not start: 0xC0000135)."""
+    exe_dir = tmp_path / "piper_tts" / "executable"
+    exe_dir.mkdir(parents=True)
+    (exe_dir / "piper.exe").write_bytes(b"MZ fake exe")
+    state_file = tmp_path / "feature_state.json"
+    state = {
+        "piper_tts/executable": {
+            "ready": True,
+            "paths": {"piper.exe": str(exe_dir / "piper.exe")},
+        }
+    }
+    feature_manager.save_feature_state(state, state_file=state_file)
+
+    assert not feature_manager.is_ready(
+        "piper_tts", "executable", state_file=state_file
+    )
+
+    # Once the full tree is recorded (post re-download), ready again.
+    (exe_dir / "espeak-ng.dll").write_bytes(b"MZ fake dll")
+    state["piper_tts/executable"]["paths"]["espeak-ng.dll"] = str(
+        exe_dir / "espeak-ng.dll"
+    )
+    feature_manager.save_feature_state(state, state_file=state_file)
+    assert feature_manager.is_ready(
+        "piper_tts", "executable", state_file=state_file
+    )
+
+
+@needs_wx
+def test_engine_ignores_piper_exe_without_full_runtime(
+    wx_app, tmp_path, monkeypatch
+):
+    """An exe WITHOUT espeak-ng.dll / espeak-ng-data beside it counts as
+    missing → the constructor's lazy-install path re-downloads."""
+    import piper_tts_engine
+
+    exe_dir = tmp_path / "piper_tts" / "executable"
+    exe_dir.mkdir(parents=True)
+    (exe_dir / "piper.exe").write_bytes(b"MZ fake piper exe")
+
+    monkeypatch.setattr(feature_manager, "ASSETS_ROOT", tmp_path)
+
+    def fake_is_ready(feature, asset, **kwargs):
+        return feature == "piper_tts" and asset == "executable"
+
+    monkeypatch.setattr(feature_manager, "is_ready", fake_is_ready)
+    engine = piper_tts_engine.PiperTTSEngine.__new__(
+        piper_tts_engine.PiperTTSEngine
+    )
+    engine.models_dir = tmp_path
+    engine._parent = None
+    engine._allow_prompt = False
+
+    # No runtime beside the exe → not usable.
+    assert engine._find_piper() is None
+
+    # The DLL alone is still not enough — phoneme data dir is required.
+    (exe_dir / "espeak-ng.dll").write_bytes(b"MZ fake dll")
+    assert engine._find_piper() is None
+
+    # Complete runtime → usable.
+    (exe_dir / "espeak-ng-data").mkdir()
+    assert engine._find_piper() == str(exe_dir / "piper.exe")
 
 
 @needs_wx

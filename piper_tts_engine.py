@@ -203,7 +203,18 @@ class PiperTTSEngine:
             # A 0-byte piper.exe (failed download leftover, found live
             # 2026-09-29) must count as missing, or the engine picks it
             # and synthesis dies on a broken executable.
-            if exe.exists() and exe.stat().st_size > 0:
+            # v1.3.9: the exe also needs its runtime beside it —
+            # espeak-ng.dll and the espeak-ng-data tree. v1.3.8 extracted
+            # only piper.exe, producing a binary that dies with Windows
+            # loader error 0xC0000135 ("unable to synthesize").
+            # Treating the incomplete runtime as missing sends the
+            # constructor into the lazy-install prompt, which
+            # re-downloads the full zip tree.
+            has_runtime = (
+                (exe.parent / "espeak-ng.dll").exists()
+                and (exe.parent / "espeak-ng-data").is_dir()
+            )
+            if exe.exists() and exe.stat().st_size > 0 and has_runtime:
                 return str(exe)
         # 2. CWD (legacy behaviour — piper.exe next to SpeechCraft).
         if os.path.exists("piper.exe"):

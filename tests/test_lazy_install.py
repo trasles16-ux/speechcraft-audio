@@ -19,6 +19,7 @@ Pure logic tests for the size formatter live alongside.
 
 from __future__ import annotations
 
+import shutil
 import sys
 import zipfile
 from pathlib import Path
@@ -41,25 +42,27 @@ def test_format_size_bytes():
 
 
 def test_extract_from_zip_literal_entry(tmp_path):
-    """_extract_from_zip finds the entry by its literal name."""
+    """_extract_from_zip extracts the whole tree under the entry's prefix."""
     import feature_manager
 
     zip_path = tmp_path / "test.zip"
     with zipfile.ZipFile(zip_path, "w") as zf:
         zf.writestr("piper/piper.exe", b"FAKE-ONNX-CONTENT")
+        zf.writestr("piper/espeak-ng.dll", b"DLL")
 
     out = feature_manager._extract_from_zip(
         str(zip_path),
-        entry_name="piper/piper.exe",
         out_dir=tmp_path / "out",
+        strip_prefix="piper",
     )
-    assert out.exists()
-    assert out.name == "piper.exe"
-    assert out.read_bytes() == b"FAKE-ONNX-CONTENT"
+    assert sorted(p.name for p in out) == ["espeak-ng.dll", "piper.exe"]
+    assert (tmp_path / "out" / "piper.exe").read_bytes() == (
+        b"FAKE-ONNX-CONTENT"
+    )
 
 
 def test_extract_from_zip_basename_fallback(tmp_path):
-    """If literal entry isn't found, fall back to basename match."""
+    """Entries without the common prefix extract under their own names."""
     import feature_manager
 
     zip_path = tmp_path / "test.zip"
@@ -68,25 +71,48 @@ def test_extract_from_zip_basename_fallback(tmp_path):
 
     out = feature_manager._extract_from_zip(
         str(zip_path),
-        entry_name="piper.exe",  # short form, no "piper/" prefix
         out_dir=tmp_path / "out",
+        strip_prefix="piper",
     )
-    assert out.exists()
-    assert out.name == "piper.exe"
+    assert [p.name for p in out] == ["piper.exe"]
 
 
-def test_extract_from_zip_missing_entry_raises(tmp_path):
+def test_extract_from_zip_missing_entry_raises(tmp_path, monkeypatch):
+    """A zip lacking the expected entry fails the asset with a clear
+    reason instead of recording a ready-but-empty install."""
     import feature_manager
 
     zip_path = tmp_path / "test.zip"
     with zipfile.ZipFile(zip_path, "w") as zf:
         zf.writestr("something/else.txt", b"x")
 
-    with pytest.raises(OSError, match="not found in zip"):
-        feature_manager._extract_from_zip(
-            str(zip_path),
-            entry_name="piper/piper.exe",
-            out_dir=tmp_path / "out",
+    from updater import sha256_of_file
+
+    orig = feature_manager.FEATURE_ASSETS["piper_tts"]["executable"]
+    patched = dict(orig)
+    files = [dict(f) for f in orig["files"]]
+    files[0]["sha256"] = sha256_of_file(str(zip_path))
+    patched["files"] = files
+    monkeypatch.setitem(
+        feature_manager.FEATURE_ASSETS["piper_tts"],
+        "executable",
+        patched,
+    )
+
+    def fake_download(url, dest, **kwargs):
+        shutil.copyfile(zip_path, dest)
+        return dest
+
+    monkeypatch.setattr("updater.download_with_progress", fake_download)
+
+    with pytest.raises(
+        feature_manager.FeatureDownloadError, match="did not contain"
+    ):
+        feature_manager.download_asset(
+            "piper_tts",
+            "executable",
+            dest_dir=tmp_path / "assets",
+            state_file=tmp_path / "feature_state.json",
         )
 
 

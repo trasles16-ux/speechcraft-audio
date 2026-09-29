@@ -140,11 +140,15 @@ def test_piper_engine_find_piper_prefers_feature_manager(tmp_path, monkeypatch):
     import feature_manager
     import piper_tts_engine
 
-    # Plant a fake piper.exe where feature_manager expects it.
+    # Plant a fake piper.exe — with the runtime files beside it that
+    # v1.3.9 requires (espeak-ng.dll + espeak-ng-data) — where
+    # feature_manager expects it.
     exe_dir = tmp_path / "feature_assets" / "piper_tts" / "executable"
     exe_dir.mkdir(parents=True)
     fake = exe_dir / "piper.exe"
     fake.write_bytes(b"FAKE")
+    (exe_dir / "espeak-ng.dll").write_bytes(b"FAKE-DLL")
+    (exe_dir / "espeak-ng-data").mkdir()
 
     monkeypatch.setattr(
         feature_manager, "is_ready",

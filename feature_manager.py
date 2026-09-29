@@ -283,6 +283,25 @@ def is_ready(feature: str, asset_name: str, *, state_file: Path | None = None) -
     for path_str in entry.get("paths", {}).values():
         if not Path(path_str).exists():
             return False
+    # v1.3.9: the Piper release zip carries the exe's whole runtime
+    # (espeak-ng.dll, onnxruntime.dll, piper_phonemize.dll and the
+    # espeak-ng-data tree). v1.3.8 and earlier extracted ONLY piper.exe,
+    # so installed copies recorded a single path and still "looked"
+    # ready while the binary could not start (Windows loader error
+    # 0xC0000135 → "unable to synthesize", found live 2026-09-29).
+    # A ready piper_tts/executable entry that does not record the DLL
+    # is a stale, broken install: report it as not-ready so the lazy
+    # install / wizard flow re-downloads the full tree and overwrites
+    # the entry (self-heal on first Piper use, no reinstall needed).
+    if (
+        feature == "piper_tts"
+        and asset_name == "executable"
+        and not any(
+            key.endswith("espeak-ng.dll")
+            for key in entry.get("paths", {})
+        )
+    ):
+        return False
     return True
 
 
@@ -321,113 +340,109 @@ def _sha256_of_file(path: Path) -> str:
 def _extract_from_zip(
     zip_path: str,
     *,
-    entry_name: str,
     out_dir: Path,
-) -> Path:
-    """Extract a single file from ``zip_path`` into ``out_dir``.
+    strip_prefix: str = "",
+) -> list[Path]:
+    """Extract every file in ``zip_path`` into ``out_dir``.
 
-    Returns the extracted file's path. Raises ``OSError`` if the
-    zip is unreadable or the entry isn't found. Stdlib-only
-    (``zipfile``), no new deps.
+    Returns the list of extracted file paths (directories are created
+    as needed but not listed). Raises ``OSError`` if the zip is
+    unreadable. Stdlib-only (``zipfile``), no new deps.
 
-    ``entry_name`` can be the literal name (e.g. ``piper/piper.exe``)
-    or a short suffix (e.g. ``piper.exe``); the matcher prefers the
-    literal name and falls back to a basename match.
+    Why the WHOLE tree, not one entry: the piper Windows release zip
+    is not just ``piper.exe`` — it bundles ``espeak-ng.dll``,
+    ``onnxruntime.dll``, ``piper_phonemize.dll`` and the entire
+    ``espeak-ng-data`` directory (phoneme dictionaries, language
+    definitions) that the exe loads at runtime. Extracting only the
+    exe produced a binary that could not start: Windows loader error
+    0xC0000135 (DLL not found) surfaced in the app as "unable to
+    synthesize" (found live 2026-09-29).
 
-    If the zip file is truncated or otherwise corrupt, ``zipfile``
-    raises ``EOFError`` mid-read (zipfile's central directory can
-    reference an entry whose compressed bytes never landed on disk).
-    We catch that and re-raise as ``OSError`` with a clear message
-    so the caller can surface a friendly "the download was truncated,
-    please try again" instead of a Python traceback.
+    A common ``strip_prefix`` (the repeated top folder, ``piper/``)
+    is removed so files land directly in ``out_dir``.
+
+    Safety properties (kept from the v1.3.8 rework):
+    - Everything is extracted to ``.extract`` temp paths and swapped
+      into place only after the whole zip read completes — the input
+      zip is never truncated, and when the output tree IS the zip's
+      directory (download_asset lands the zip at
+      ``out_dir/piper.exe``, the same path as the extracted binary),
+      the swap happens after the zip handle closes.
+    - Zip-slip defence: entry names are resolved and verified to stay
+      inside ``out_dir`` before any bytes are written.
+    - If the zip is truncated or corrupt (``EOFError``/``BadZipFile``),
+      the bad zip and any ``.extract`` temporaries are cleaned up and
+      a clear ``OSError`` is raised; previously-swapped good files are
+      untouched.
     """
     import zipfile
 
-    out_path: Path | None = None
+    zip_path_resolved = Path(zip_path).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    extracted: list[Path] = []
+    tmp_paths: list[Path] = []
+    prefix = strip_prefix.strip("/") + "/" if strip_prefix else ""
     try:
         with zipfile.ZipFile(zip_path) as zf:
-            names = zf.namelist()
-            # Literal match first
-            target: str | None = entry_name if entry_name in names else None
-            if target is None and entry_name:
-                # Fall back to basename match (e.g. "piper/piper.exe" -> "piper.exe")
-                short = entry_name.rsplit("/", 1)[-1]
-                for n in names:
-                    if n.endswith("/" + short) or n == short:
-                        target = n
-                        break
-            if target is None:
-                raise OSError(
-                    f"{entry_name!r} not found in zip; archive contains: {names}"
-                )
-            out_path = out_dir / Path(target).name
-            out_dir.mkdir(parents=True, exist_ok=True)
-            # Write to a temp sibling and swap after the zip is CLOSED.
-            # The extracted file is very often the SAME path as the zip
-            # itself (download_asset downloads piper_windows_amd64.zip
-            # to out_dir/piper.exe then extracts piper.exe into
-            # out_dir). Writing in place truncated the input zip
-            # mid-read — EOFError on every attempt (found live
-            # 2026-09-29, the v1.3.6.2 "Piper EOFError" return) — and
-            # os.replace onto the open zip fails on Windows with
-            # WinError 5, so the swap happens after the ``with`` block.
-            same_file = (
-                out_path.resolve() == Path(zip_path).resolve()
-            )
-            tmp_out = out_path.with_name(out_path.name + ".extract")
-            with zf.open(target) as src, open(tmp_out, "wb") as dst:
-                while True:
-                    chunk = src.read(1 << 20)
-                    if not chunk:
-                        break
-                    dst.write(chunk)
+            for info in zf.infolist():
+                name = info.filename
+                if name.endswith("/"):  # directory entry
+                    continue
+                if prefix and name.startswith(prefix):
+                    rel = name[len(prefix):]
+                else:
+                    rel = name
+                dest = (out_dir / rel).resolve()
+                # Zip-slip: refuse entries that escape out_dir.
+                if not str(dest).startswith(str(out_dir.resolve())):
+                    raise OSError(
+                        f"Unsafe path in zip: {name!r} escapes {out_dir}"
+                    )
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                tmp = dest.with_name(dest.name + ".extract")
+                tmp_paths.append(tmp)
+                with zf.open(info) as src, open(tmp, "wb") as dst:
+                    while True:
+                        chunk = src.read(1 << 20)
+                        if not chunk:
+                            break
+                        dst.write(chunk)
+                extracted.append(dest)
     except (EOFError, zipfile.BadZipFile) as exc:
-        # Truncated / corrupt zip. The most common cause is a download
-        # that bailed out partway. Measure the truncated file FIRST,
-        # then delete it. The extracted output is written to a temp
-        # file and swapped in only after a complete read, so a
-        # previously-good binary is untouched by a failed attempt —
-        # and a 0-byte leftover (the live 2026-09-29 bug) can no
-        # longer be produced at all.
+        # Truncated / corrupt zip. Measure it FIRST, then delete it and
+        # every temp copy. Swapped-in good files from any earlier
+        # successful install are untouched (found live 2026-09-29: the
+        # pre-fix code left a 0-byte piper.exe that "looked installed").
         size = os.path.getsize(zip_path) if os.path.isfile(zip_path) else 0
         try:
             os.unlink(zip_path)
         except OSError:
             pass
-        try:
-            (out_dir / (Path(entry_name).name + ".extract")).unlink(
-                missing_ok=True
-            )
-        except OSError:
-            pass
+        for tmp in tmp_paths:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
         raise OSError(
             f"Zip file {zip_path} is truncated or corrupt "
-            f"({size:,} bytes on disk; reading entry {entry_name!r} hit "
-            f"end-of-file). The download was incomplete — re-downloading "
-            f"should fix it."
+            f"({size:,} bytes on disk). The download was incomplete — "
+            f"re-downloading should fix it."
         ) from exc
-    if out_path is None:
-        raise OSError(f"{entry_name!r} not found in zip")
-    # The zip handle is closed now — the swap is safe even when the
-    # extracted file IS the zip file (delete the zip, move the copy in).
-    if same_file:
-        try:
-            os.unlink(out_path)
-        except OSError:
-            pass
-    try:
-        os.replace(tmp_out, out_path)
-    except OSError:
-        try:
-            tmp_out.unlink(missing_ok=True)
-        except OSError:
-            pass
-        raise
-    return out_path
+    # The zip handle is closed — swapping is now safe even where the
+    # destination collides with the zip itself (piper.exe case).
+    for tmp, dest in zip(tmp_paths, extracted):
+        if dest.exists() or dest.is_symlink():
+            try:
+                os.unlink(dest)
+            except OSError:
+                pass
+        os.replace(tmp, dest)
+    return extracted
 
 
 def download_asset(
     feature: str,
+
     asset_name: str,
     *,
     dest_dir: Path | None = None,
@@ -521,7 +536,14 @@ def download_asset(
             # piper_windows_amd64.zip reached extraction and crashed
             # (found live 2026-09-29). SHA failure is retryable too:
             # each attempt fetches a fresh copy.
-            extracted: Path | None = None
+            # The zip carries the exe's whole runtime (DLLs,
+            # espeak-ng-data); extract everything under the entry's
+            # top-level folder (``piper/piper.exe`` -> strip ``piper/``).
+            zip_entry = file_spec.get("extract_entry", "")
+            strip_prefix = (
+                zip_entry.rsplit("/", 1)[0] if "/" in zip_entry else ""
+            )
+            extracted_files: list[Path] = []
             extract_attempts = max(1, MAX_DOWNLOAD_RETRIES)
             last_zip_error: str = ""
             for attempt in range(extract_attempts):
@@ -558,16 +580,32 @@ def download_asset(
                     )
                     continue
                 try:
-                    extracted = _extract_from_zip(
+                    extracted_files = _extract_from_zip(
                         str(final_path),
-                        entry_name=file_spec.get("extract_entry", ""),
                         out_dir=out_dir,
+                        strip_prefix=strip_prefix,
                     )
-                    break
                 except OSError as exc:
                     last_zip_error = str(exc)
                     continue
-            if extracted is None:
+                # The zip must actually contain the expected entry
+                # (e.g. piper.exe) — a re-laid-out upstream zip would
+                # otherwise "install" successfully with nothing usable.
+                expected_leaf = (
+                    zip_entry.rsplit("/", 1)[-1] if zip_entry else ""
+                )
+                if expected_leaf and all(
+                    p.name != expected_leaf for p in extracted_files
+                ):
+                    last_zip_error = (
+                        f"zip did not contain {zip_entry}"
+                    )
+                    # Clear the partial result so the post-loop failure
+                    # branch actually fires (found via test 2026-09-29).
+                    extracted_files = []
+                    continue
+                break
+            if not extracted_files:
                 state = load_feature_state(state_file=state_file)
                 entry = state.get(key) or _empty_state_entry()
                 entry["ready"] = False
@@ -582,23 +620,30 @@ def download_asset(
                     f"Could not extract {file_name} after "
                     f"{extract_attempts} attempts: {last_zip_error}",
                 )
-            # The downloaded zip is throw-away — drop it so the
-            # asset dir only contains the file(s) the engine actually
-            # needs. Careful: when the extracted file IS the zip path
-            # (piper.exe ← piper_windows_amd64.zip), the unlink below
-            # must NOT delete the fresh binary. _extract_from_zip
-            # already swapped the zip out and the extracted copy in at
-            # that path, so skip the cleanup in that case.
-            if extracted.resolve() != final_path.resolve():
+            # The downloaded zip is throw-away — drop it so the asset
+            # dir only contains what the engine needs. When the zip was
+            # extracted away (piper.exe case: the zip LIVED at
+            # out_dir/piper.exe and that path now holds the extracted
+            # binary), skip the unlink or we'd delete the fresh runtime.
+            if not any(
+                p.resolve() == final_path.resolve() for p in extracted_files
+            ):
                 try:
                     final_path.unlink(missing_ok=True)
                 except OSError:
                     pass
-            # Replace the planned destination with the extracted one.
-            final_path = extracted
-            paths[file_name] = str(extracted)
+            # Record EVERY extracted file so is_ready() notices an
+            # incomplete runtime and re-downloads (self-heal).
+            for p in extracted_files:
+                # Forward-slash keys keep the state file portable across
+                # platforms (values stay native absolute paths).
+                paths[
+                    str(p.relative_to(out_dir)).replace("\\", "/")
+                ] = str(p)
             # Re-record size for progress reporting.
-            bytes_done += extracted.stat().st_size if extracted.exists() else 0
+            bytes_done += sum(
+                p.stat().st_size for p in extracted_files if p.exists()
+            )
             continue
 
         # SHA-256 verify (separate step — updater does not verify internally).
