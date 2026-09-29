@@ -2,6 +2,15 @@
 
 All notable changes to SpeechCraft Audio are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/) as far as a single-developer desktop app can.
 
+## [1.3.8] — 2026-09-29
+
+### Fixed
+- **Piper TTS could never install its executable** (found live on the first v1.3.7 install). The wizard downloaded all three model assets fine, but the 22 MB `piper_windows_amd64.zip` failed with `Unexpected error: name 'os' is not defined` and left a 0-byte `piper.exe` behind. Four defects stacked up: (1) `_extract_from_zip`'s truncation handler used `os.unlink`/`os.path` but `feature_manager.py` never imported `os`, so the friendly-truncation path itself crashed with a `NameError`; (2) the v1.3.7 refactor **skipped SHA-256 verification for zip assets** — the hardcoded piper.zip SHA from v1.3.6.2 was never consulted, so a truncated zip reached extraction; (3) extraction wrote its output **in place over the zip it was reading** (both are named `piper.exe` in the same directory), truncating the input mid-read — `EOFError` on every attempt, the original v1.3.6.2 "Piper EOFError" bug returning through a new door; (4) `PiperTTSEngine._find_piper` treated a 0-byte `piper.exe` as installed. Extraction now writes to a temp file and swaps after the zip is closed (and when the extracted file IS the zip, the swap replaces it safely), the SHA is verified before extraction with fresh re-download retries (bounded by the updater's retry constants), the truncation handler cleans up the temp copy, and the engine ignores empty executables. Ten new regression tests (`tests/test_v138_piper_zip_fix.py`) reproduce each layer.
+- **Empty Download page was a focus dead-end**. With everything already downloaded, the page has no interactive controls; focus landed nowhere and NVDA announced nothing, which read as an accessibility regression. Landing on a control-free page now says why: "No controls on this page. Everything you selected is already downloaded and ready. Use the Back and Next buttons at the bottom of the window."
+
+### Removed
+- Stale local `dist` installers (the superseded pre-release local build was corrupt on disk and failed NSIS's integrity check when run manually).
+
 ## [1.3.7] — 2026-09-25
 
 ### Fixed

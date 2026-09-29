@@ -396,6 +396,18 @@ class SetupWizardDialog(wx.Dialog):
         target = first_focusable_child(page)
         if target is not None:
             target.SetFocus()
+        else:
+            # v1.3.8: a page with no interactive control (e.g. the
+            # Download page in its "everything is ready" empty state)
+            # was a focus dead-end — the user heard silence and thought
+            # accessibility had regressed. Say why, and where focus is.
+            announce_window(
+                self,
+                "No controls on this page. Everything you selected is "
+                "already downloaded and ready. Use the Back and Next "
+                "buttons at the bottom of the window.",
+                dedupe=False,
+            )
         # Pages with no interactive control (Summary) keep focus where
         # the notebook left it; the UIA page announcement still fires.
         # v1.3.6's fallback focused the heading StaticText, which is a

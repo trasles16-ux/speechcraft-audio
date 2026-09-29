@@ -21,6 +21,7 @@ See docs/plans/2026-09-14-v1.3.0-feature-manager.md for the design.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Final
@@ -342,6 +343,7 @@ def _extract_from_zip(
     """
     import zipfile
 
+    out_path: Path | None = None
     try:
         with zipfile.ZipFile(zip_path) as zf:
             names = zf.namelist()
@@ -360,32 +362,67 @@ def _extract_from_zip(
                 )
             out_path = out_dir / Path(target).name
             out_dir.mkdir(parents=True, exist_ok=True)
-            with zf.open(target) as src, open(out_path, "wb") as dst:
+            # Write to a temp sibling and swap after the zip is CLOSED.
+            # The extracted file is very often the SAME path as the zip
+            # itself (download_asset downloads piper_windows_amd64.zip
+            # to out_dir/piper.exe then extracts piper.exe into
+            # out_dir). Writing in place truncated the input zip
+            # mid-read — EOFError on every attempt (found live
+            # 2026-09-29, the v1.3.6.2 "Piper EOFError" return) — and
+            # os.replace onto the open zip fails on Windows with
+            # WinError 5, so the swap happens after the ``with`` block.
+            same_file = (
+                out_path.resolve() == Path(zip_path).resolve()
+            )
+            tmp_out = out_path.with_name(out_path.name + ".extract")
+            with zf.open(target) as src, open(tmp_out, "wb") as dst:
                 while True:
                     chunk = src.read(1 << 20)
                     if not chunk:
                         break
                     dst.write(chunk)
-    except EOFError as exc:
+    except (EOFError, zipfile.BadZipFile) as exc:
         # Truncated / corrupt zip. The most common cause is a download
-        # that bailed out partway and slipped through
-        # download_with_progress's content-length accounting (e.g.
-        # the server returned a Content-Length that didn't match what
-        # it actually delivered, or the connection was reset after
-        # the last byte was written). Re-raise as OSError so the
-        # caller's ``except OSError`` branch catches it and the
-        # downstream state-file cleanup runs.
+        # that bailed out partway. Measure the truncated file FIRST,
+        # then delete it. The extracted output is written to a temp
+        # file and swapped in only after a complete read, so a
+        # previously-good binary is untouched by a failed attempt —
+        # and a 0-byte leftover (the live 2026-09-29 bug) can no
+        # longer be produced at all.
+        size = os.path.getsize(zip_path) if os.path.isfile(zip_path) else 0
         try:
             os.unlink(zip_path)
         except OSError:
             pass
-        size = os.path.getsize(zip_path) if os.path.isfile(zip_path) else 0
+        try:
+            (out_dir / (Path(entry_name).name + ".extract")).unlink(
+                missing_ok=True
+            )
+        except OSError:
+            pass
         raise OSError(
             f"Zip file {zip_path} is truncated or corrupt "
             f"({size:,} bytes on disk; reading entry {entry_name!r} hit "
             f"end-of-file). The download was incomplete — re-downloading "
             f"should fix it."
         ) from exc
+    if out_path is None:
+        raise OSError(f"{entry_name!r} not found in zip")
+    # The zip handle is closed now — the swap is safe even when the
+    # extracted file IS the zip file (delete the zip, move the copy in).
+    if same_file:
+        try:
+            os.unlink(out_path)
+        except OSError:
+            pass
+    try:
+        os.replace(tmp_out, out_path)
+    except OSError:
+        try:
+            tmp_out.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
     return out_path
 
 
@@ -438,6 +475,8 @@ def download_asset(
 
         # Reuse the v1.2.0 download machinery
         from updater import (
+            MAX_DOWNLOAD_RETRIES,
+            RETRY_BACKOFF_S,
             UpdateCheckError,
             download_with_progress,
             verify_asset_sha256,
@@ -470,42 +509,97 @@ def download_asset(
 
         # Optional post-download extraction (e.g. zip → single binary).
         # Used for assets like ``piper.exe`` whose URL is a release zip.
+        # Retried on truncation/corruption: the zip is re-downloaded
+        # fresh for each attempt (the failed copy is deleted by
+        # _extract_from_zip before it raises).
         extract_mode = file_spec.get("extract")
         if extract_mode == "zip":
-            try:
-                extracted = _extract_from_zip(
-                    str(final_path),
-                    entry_name=file_spec.get("extract_entry", ""),
-                    out_dir=out_dir,
+            # SHA-256 verify BEFORE extraction, with retries. v1.3.6.2
+            # hardcoded the piper.zip SHA for exactly this: Content-Length
+            # accounting can pass a truncated download. The v1.3.7
+            # refactor skipped the check for zip assets and a truncated
+            # piper_windows_amd64.zip reached extraction and crashed
+            # (found live 2026-09-29). SHA failure is retryable too:
+            # each attempt fetches a fresh copy.
+            extracted: Path | None = None
+            extract_attempts = max(1, MAX_DOWNLOAD_RETRIES)
+            last_zip_error: str = ""
+            for attempt in range(extract_attempts):
+                if attempt > 0:
+                    # Fetch a fresh copy for this attempt (backoff first,
+                    # mirroring updater.download_with_progress).
+                    time.sleep(RETRY_BACKOFF_S[min(attempt - 1, len(RETRY_BACKOFF_S) - 1)])
+                    try:
+                        download_with_progress(
+                            url,
+                            str(final_path),
+                            progress_cb=_chunk_cb,
+                            cancel_check=cancel_check,
+                        )
+                    except UpdateCheckError as exc:
+                        state = load_feature_state(state_file=state_file)
+                        entry = state.get(key) or _empty_state_entry()
+                        entry["ready"] = False
+                        entry["last_error"] = str(exc)
+                        state[key] = entry
+                        save_feature_state(state, state_file=state_file)
+                        raise FeatureDownloadError(key, str(exc)) from exc
+                # Verify the copy we have (initial download on attempt 0,
+                # fresh download on later attempts).
+                if expected_sha and not verify_asset_sha256(
+                    str(final_path), expected_sha
+                ):
+                    try:
+                        final_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    last_zip_error = (
+                        f"SHA-256 mismatch for {file_name} — re-download needed"
+                    )
+                    continue
+                try:
+                    extracted = _extract_from_zip(
+                        str(final_path),
+                        entry_name=file_spec.get("extract_entry", ""),
+                        out_dir=out_dir,
+                    )
+                    break
+                except OSError as exc:
+                    last_zip_error = str(exc)
+                    continue
+            if extracted is None:
+                state = load_feature_state(state_file=state_file)
+                entry = state.get(key) or _empty_state_entry()
+                entry["ready"] = False
+                entry["last_error"] = (
+                    f"Could not extract {file_name} after "
+                    f"{extract_attempts} attempts: {last_zip_error}"
                 )
-                # The downloaded zip is throw-away — drop it so the
-                # asset dir only contains the file(s) the engine
-                # actually needs.
+                state[key] = entry
+                save_feature_state(state, state_file=state_file)
+                raise FeatureDownloadError(
+                    key,
+                    f"Could not extract {file_name} after "
+                    f"{extract_attempts} attempts: {last_zip_error}",
+                )
+            # The downloaded zip is throw-away — drop it so the
+            # asset dir only contains the file(s) the engine actually
+            # needs. Careful: when the extracted file IS the zip path
+            # (piper.exe ← piper_windows_amd64.zip), the unlink below
+            # must NOT delete the fresh binary. _extract_from_zip
+            # already swapped the zip out and the extracted copy in at
+            # that path, so skip the cleanup in that case.
+            if extracted.resolve() != final_path.resolve():
                 try:
                     final_path.unlink(missing_ok=True)
                 except OSError:
                     pass
-                # Replace the planned destination with the extracted one.
-                final_path = extracted
-                paths[file_name] = str(extracted)
-                # Re-record size for progress reporting.
-                bytes_done += extracted.stat().st_size if extracted.exists() else 0
-                # No SHA verification step below — we trust the zip was
-                # downloaded intact (verified by download_with_progress's
-                # size accounting against the Content-Length). The zip
-                # itself is throwaway and the engine only reads the
-                # extracted binary.
-                continue
-            except OSError as exc:
-                state = load_feature_state(state_file=state_file)
-                entry = state.get(key) or _empty_state_entry()
-                entry["ready"] = False
-                entry["last_error"] = f"Could not extract {file_name}: {exc}"
-                state[key] = entry
-                save_feature_state(state, state_file=state_file)
-                raise FeatureDownloadError(
-                    key, f"Could not extract {file_name}: {exc}"
-                ) from exc
+            # Replace the planned destination with the extracted one.
+            final_path = extracted
+            paths[file_name] = str(extracted)
+            # Re-record size for progress reporting.
+            bytes_done += extracted.stat().st_size if extracted.exists() else 0
+            continue
 
         # SHA-256 verify (separate step — updater does not verify internally).
         # If the asset spec has an empty ``sha256`` but a ``sha256_url``,

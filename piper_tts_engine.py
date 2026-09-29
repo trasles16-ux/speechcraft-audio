@@ -200,7 +200,10 @@ class PiperTTSEngine:
                 / "executable"
                 / "piper.exe"
             )
-            if exe.exists():
+            # A 0-byte piper.exe (failed download leftover, found live
+            # 2026-09-29) must count as missing, or the engine picks it
+            # and synthesis dies on a broken executable.
+            if exe.exists() and exe.stat().st_size > 0:
                 return str(exe)
         # 2. CWD (legacy behaviour — piper.exe next to SpeechCraft).
         if os.path.exists("piper.exe"):
